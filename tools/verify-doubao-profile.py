@@ -1,4 +1,4 @@
-"""Read-only login check for an isolated Doubao browser profile."""
+"""Read-only free-video verification for an isolated Doubao browser profile."""
 
 import argparse
 import json
@@ -119,7 +119,7 @@ def count_today_videos(page, today: str) -> int | None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Read-only Doubao profile login check")
+    parser = argparse.ArgumentParser(description="Read-only Doubao free-video profile check")
     parser.add_argument("--profile", required=True, help="Isolated browser user-data directory")
     parser.add_argument("--headed", action="store_true", help="Use a visible browser")
     args = parser.parse_args()
