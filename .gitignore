@@ -1,3 +1,5 @@
 /*_sandbox_data/
 **/.env
 **/.env.*
+**/__pycache__/
+**/*.pyc
