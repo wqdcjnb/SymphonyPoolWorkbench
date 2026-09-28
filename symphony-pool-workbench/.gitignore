@@ -1,0 +1,7 @@
+data/*.sqlite
+data/*.sqlite-*
+data/*.pid
+logs/*.log
+output/playwright/*.png
+!data/.gitkeep
+!logs/.gitkeep
