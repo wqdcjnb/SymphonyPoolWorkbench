@@ -97,7 +97,7 @@
 
   <dialog id="accountDialog">
     <form id="accountForm" method="dialog">
-      <div class="dialog-heading"><div><span class="kicker">NEW PROFILE</span><h2>新增账号档案</h2></div><button class="icon-button" value="cancel" aria-label="关闭">×</button></div>
+      <div class="dialog-heading"><div><span class="kicker">NEW PROFILE</span><h2>新增账号档案</h2></div><button class="icon-button" id="closeAccountDialogButton" type="button" aria-label="关闭">×</button></div>
       <label>账号编号<input name="accountId" required pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,127}" placeholder="xzkj-pc-01-symphony-02"></label>
       <label>显示名称<input name="label" required maxlength="80" placeholder="Symphony TK 二号账号"></label>
       <label>登录类型<select name="loginType"><option value="tiktok">TikTok</option><option value="doubao">豆包</option></select></label>

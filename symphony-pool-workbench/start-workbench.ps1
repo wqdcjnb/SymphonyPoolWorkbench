@@ -1,11 +1,13 @@
 [CmdletBinding()]
 param(
+  [ValidateRange(1, 65535)]
   [int]$Port = 8787,
   [switch]$NoBrowser
 )
 
 $ErrorActionPreference = 'Stop'
 $ProjectRoot = $PSScriptRoot
+$ServerPath = Join-Path $ProjectRoot 'server.mjs'
 $DataPath = Join-Path $ProjectRoot 'data'
 $LogPath = Join-Path $ProjectRoot 'logs'
 $PidPath = Join-Path $DataPath 'workbench.pid'
@@ -17,20 +19,37 @@ New-Item -ItemType Directory -Force -Path $DataPath, $LogPath | Out-Null
 
 try {
   $health = Invoke-RestMethod -Uri "$Url/api/health" -TimeoutSec 2
-  if ($health.ok) {
+  if ($health.ok -and $health.service -eq 'symphony-pool-workbench' -and $health.localOnly) {
     if (-not $NoBrowser) { Start-Process $Url }
     Write-Output "Symphony 号池工作台已在运行：$Url"
     exit 0
   }
 } catch { }
 
-$process = Start-Process -FilePath 'node.exe' `
-  -ArgumentList @('--disable-warning=ExperimentalWarning', 'server.mjs') `
-  -WorkingDirectory $ProjectRoot `
-  -RedirectStandardOutput $StdoutPath `
-  -RedirectStandardError $StderrPath `
-  -WindowStyle Hidden `
-  -PassThru
+$previousPort = $env:WORKBENCH_PORT
+$previousHost = $env:WORKBENCH_HOST
+try {
+  $env:WORKBENCH_PORT = [string]$Port
+  $env:WORKBENCH_HOST = '127.0.0.1'
+  $process = Start-Process -FilePath 'node.exe' `
+    -ArgumentList @('--disable-warning=ExperimentalWarning', ('"{0}"' -f $ServerPath)) `
+    -WorkingDirectory $ProjectRoot `
+    -RedirectStandardOutput $StdoutPath `
+    -RedirectStandardError $StderrPath `
+    -WindowStyle Hidden `
+    -PassThru
+} finally {
+  if ($null -eq $previousPort) {
+    Remove-Item Env:WORKBENCH_PORT -ErrorAction SilentlyContinue
+  } else {
+    $env:WORKBENCH_PORT = $previousPort
+  }
+  if ($null -eq $previousHost) {
+    Remove-Item Env:WORKBENCH_HOST -ErrorAction SilentlyContinue
+  } else {
+    $env:WORKBENCH_HOST = $previousHost
+  }
+}
 
 [System.IO.File]::WriteAllText($PidPath, [string]$process.Id)
 
@@ -38,7 +57,7 @@ $ready = $false
 for ($attempt = 0; $attempt -lt 30; $attempt += 1) {
   try {
     $health = Invoke-RestMethod -Uri "$Url/api/health" -TimeoutSec 2
-    if ($health.ok) { $ready = $true; break }
+    if ($health.ok -and $health.service -eq 'symphony-pool-workbench' -and $health.localOnly) { $ready = $true; break }
   } catch { }
   Start-Sleep -Milliseconds 500
 }

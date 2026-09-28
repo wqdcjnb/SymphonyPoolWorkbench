@@ -4,6 +4,17 @@
 
 ## 启动
 
+需要 Node.js 24。只读验收还需要 Python、Chrome 或 Edge，并在项目目录安装 Python Playwright：
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+若 `python` 指向 Windows Store 占位程序，请把第一行的 `python` 换成本机已安装的 `python.exe` 完整路径。
+
+已安装的 Chrome 或 Edge 会被直接使用，不需要下载 Playwright 浏览器。
+
 ```powershell
 .\start-workbench.ps1
 ```

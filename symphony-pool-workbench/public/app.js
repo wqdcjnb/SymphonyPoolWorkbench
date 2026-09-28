@@ -156,6 +156,7 @@ document.addEventListener("click", async (event) => {
 
 $("#refreshButton").addEventListener("click", () => refresh().then(() => toast("数据已刷新")).catch((error) => toast(error.message, true)));
 $("#addAccountButton").addEventListener("click", () => $("#accountDialog").showModal());
+$("#closeAccountDialogButton").addEventListener("click", () => $("#accountDialog").close());
 
 $("#accountForm").addEventListener("submit", async (event) => {
   event.preventDefault();

@@ -3,13 +3,18 @@ param(
   [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$')]
   [string]$AccountId = 'xzkj-pc-01-symphony-01',
 
-  [ValidatePattern('^https://ads\.tiktok\.com/')]
-  [string]$StartUrl = 'https://ads.tiktok.com/creative/creativestudio/settings/credit'
+  [ValidateSet('tiktok', 'doubao')]
+  [string]$LoginType = 'tiktok'
 )
 
 $ErrorActionPreference = 'Stop'
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $ProfilePath = Join-Path $ProjectRoot ("{0}_sandbox_data" -f $AccountId)
+$StartUrl = if ($LoginType -eq 'doubao') {
+  'https://www.doubao.com/chat/'
+} else {
+  'https://ads.tiktok.com/creative/creativestudio/settings/credit'
+}
 
 $candidatePaths = [System.Collections.Generic.List[string]]::new()
 foreach ($basePath in @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:LOCALAPPDATA)) {
@@ -33,7 +38,7 @@ if (-not (Test-Path -LiteralPath $ProfilePath -PathType Container)) {
 }
 
 $arguments = @(
-  "--user-data-dir=$ProfilePath"
+  "--user-data-dir=`"$ProfilePath`""
   '--profile-directory=Default'
   '--new-window'
   '--no-first-run'
@@ -46,6 +51,7 @@ $process = Start-Process -FilePath $BrowserPath -ArgumentList $arguments -PassTh
 
 [pscustomobject]@{
   AccountId   = $AccountId
+  LoginType   = $LoginType
   ProfilePath = $ProfilePath
   BrowserPath = $BrowserPath
   ProcessId   = $process.Id

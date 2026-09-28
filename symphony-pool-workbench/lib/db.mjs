@@ -236,7 +236,11 @@ export function createStore(databasePath) {
     },
 
     recordProfileOpened(id) {
-      insertEvent({ accountId: id, eventType: "account.profile_opened", message: "已打开专用登录窗口" });
+      return transaction(() => {
+        db.prepare("UPDATE accounts SET status=CASE WHEN status='provisioning' THEN 'auth_required' ELSE status END, updated_at=? WHERE id=?")
+          .run(Date.now(), id);
+        insertEvent({ accountId: id, eventType: "account.profile_opened", message: "已打开专用登录窗口" });
+      });
     },
 
     createDraftJob(input) {
@@ -302,7 +306,7 @@ export function createStore(databasePath) {
       const accounts = db.prepare(`SELECT COUNT(*) AS total,
         SUM(CASE WHEN status='ready' THEN 1 ELSE 0 END) AS ready,
         SUM(CASE WHEN status='auth_required' THEN 1 ELSE 0 END) AS authRequired,
-        COALESCE(SUM(CASE WHEN status='ready' THEN credits_remaining ELSE 0 END), 0) AS availableCredits
+        COALESCE(SUM(CASE WHEN service='symphony' AND status='ready' THEN credits_remaining ELSE 0 END), 0) AS availableCredits
         FROM accounts`).get();
       const jobs = db.prepare(`SELECT COUNT(*) AS total,
         SUM(CASE WHEN status='draft' THEN 1 ELSE 0 END) AS draft,

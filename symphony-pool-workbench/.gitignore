@@ -2,6 +2,7 @@ data/*.sqlite
 data/*.sqlite-*
 data/*.pid
 logs/*.log
+.venv/
 output/playwright/*.png
 !data/.gitkeep
 !logs/.gitkeep

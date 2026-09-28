@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
-import { execFile, spawn } from "node:child_process";
+import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
@@ -14,6 +14,7 @@ const publicRoot = path.join(projectRoot, "public");
 const DEFAULT_ACCOUNT_ID = "xzkj-pc-01-symphony-01";
 const DEFAULT_WORKER_ID = "xzkj-pc-01";
 const ACCOUNT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const LOGIN_TYPES = new Set(["tiktok", "doubao"]);
 const MODEL_OPTIONS = new Set([
   "Dreamina Seedance 2.0",
   "Dreamina Seedance 2.0 Mini",
@@ -111,11 +112,15 @@ function parseVerifierOutput(stdout) {
 
 export function createWorkbenchServer(options = {}) {
   const host = options.host || "127.0.0.1";
+  if (host !== "127.0.0.1") throw new Error("LOCAL_HOST_REQUIRED");
   const port = Number(options.port || 8787);
   const workspaceRoot = path.resolve(options.workspaceRoot || defaultWorkspaceRoot);
   const databasePath = path.resolve(options.databasePath || path.join(projectRoot, "data", "workbench.sqlite"));
   const verifierPath = path.resolve(options.verifierPath || path.join(workspaceRoot, "tools", "verify-symphony-profile.py"));
+  const doubaoVerifierPath = path.resolve(options.doubaoVerifierPath || path.join(workspaceRoot, "tools", "verify-doubao-profile.py"));
   const launcherPath = path.resolve(options.launcherPath || path.join(workspaceRoot, "tools", "open-symphony-profile.ps1"));
+  const pythonExecutable = options.pythonExecutable || process.env.WORKBENCH_PYTHON ||
+    path.join(projectRoot, ".venv", "Scripts", "python.exe");
   const store = createStore(databasePath);
   const verificationLocks = new Set();
 
@@ -131,11 +136,13 @@ export function createWorkbenchServer(options = {}) {
   });
 
   const runVerification = async (account) => {
-    if (!fs.existsSync(verifierPath)) throw new Error("VERIFIER_NOT_FOUND");
+    const selectedVerifier = account.loginType === "doubao" ? doubaoVerifierPath : verifierPath;
+    if (!fs.existsSync(selectedVerifier)) throw new Error("VERIFIER_NOT_FOUND");
+    if (!fs.existsSync(pythonExecutable)) throw new Error("PYTHON_NOT_CONFIGURED");
     if (!fs.existsSync(account.profilePath)) throw new Error("PROFILE_NOT_FOUND");
     let stdout = "";
     try {
-      ({ stdout } = await execFileAsync("python", [verifierPath, "--headed", "--profile", account.profilePath], {
+      ({ stdout } = await execFileAsync(pythonExecutable, [selectedVerifier, "--headed", "--profile", account.profilePath], {
         cwd: workspaceRoot,
         windowsHide: true,
         timeout: 120_000,
@@ -151,10 +158,18 @@ export function createWorkbenchServer(options = {}) {
 
   const server = http.createServer(async (request, response) => {
     securityHeaders(response);
-    const requestUrl = new URL(request.url || "/", `http://${host}:${port}`);
-    const pathname = decodeURIComponent(requestUrl.pathname);
-
     try {
+      const allowedHosts = new Set([`127.0.0.1:${port}`, `localhost:${port}`]);
+      if (!allowedHosts.has(String(request.headers.host || "").toLowerCase())) {
+        return json(response, 403, { error: "HOST_NOT_ALLOWED" });
+      }
+      const requestUrl = new URL(request.url || "/", `http://${host}:${port}`);
+      let pathname;
+      try {
+        pathname = decodeURIComponent(requestUrl.pathname);
+      } catch {
+        throw new Error("INVALID_URL");
+      }
       if (pathname.startsWith("/api/") && request.method !== "GET" && !sameOriginAllowed(request, host, port)) {
         return json(response, 403, { error: "ORIGIN_NOT_ALLOWED" });
       }
@@ -181,13 +196,14 @@ export function createWorkbenchServer(options = {}) {
         const body = await readJson(request);
         const id = safeAccountId(body.accountId);
         const label = boundedText(body.label, "LABEL", 80);
-        const loginType = new Set(["tiktok", "doubao"]).has(body.loginType) ? body.loginType : "tiktok";
+        const loginType = body.loginType || "tiktok";
+        if (!LOGIN_TYPES.has(loginType)) throw new Error("INVALID_LOGIN_TYPE");
         const workerId = boundedText(body.workerId || DEFAULT_WORKER_ID, "WORKER_ID", 128);
         const account = store.ensureAccount({
           id,
           label,
           loginType,
-          service: "symphony",
+          service: loginType === "doubao" ? "doubao" : "symphony",
           workerId,
           profilePath: resolveProfilePath(workspaceRoot, id),
           status: "provisioning",
@@ -201,13 +217,17 @@ export function createWorkbenchServer(options = {}) {
         const account = store.getAccount(id);
         if (!account) return json(response, 404, { error: "ACCOUNT_NOT_FOUND" });
         if (!fs.existsSync(launcherPath)) return json(response, 500, { error: "LAUNCHER_NOT_FOUND" });
-        const child = spawn("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", launcherPath, "-AccountId", id], {
-          cwd: workspaceRoot,
-          detached: true,
-          stdio: "ignore",
-          windowsHide: false,
-        });
-        child.unref();
+        try {
+          await execFileAsync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", launcherPath,
+            "-AccountId", id, "-LoginType", account.loginType], {
+            cwd: workspaceRoot,
+            windowsHide: true,
+            timeout: 30_000,
+            maxBuffer: 16 * 1024,
+          });
+        } catch (error) {
+          return json(response, 500, { error: error.killed ? "PROFILE_LAUNCH_TIMEOUT" : "PROFILE_LAUNCH_FAILED" });
+        }
         store.recordProfileOpened(id);
         return json(response, 202, { ok: true, accountId: id });
       }
@@ -223,7 +243,11 @@ export function createWorkbenchServer(options = {}) {
         try {
           const result = await runVerification(account);
           const updated = store.saveVerification(id, result);
-          return json(response, result.ok ? 200 : 409, { result, account: updated });
+          return json(response, result.ok ? 200 : 409, {
+            ...(result.ok ? {} : { error: result.error || "VERIFICATION_FAILED" }),
+            result,
+            account: updated,
+          });
         } catch (error) {
           const code = String(error.message || "VERIFIER_FAILED").slice(0, 120);
           store.saveVerificationFailure(id, code);
@@ -254,7 +278,11 @@ export function createWorkbenchServer(options = {}) {
           : [];
         if ((body.referenceAssets || []).length > 4) throw new Error("TOO_MANY_REFERENCE_ASSETS");
         const accountId = body.accountId ? safeAccountId(body.accountId) : null;
-        if (accountId && !store.getAccount(accountId)) throw new Error("ACCOUNT_NOT_FOUND");
+        const targetAccount = accountId ? store.getAccount(accountId) : null;
+        if (accountId && !targetAccount) throw new Error("ACCOUNT_NOT_FOUND");
+        if (targetAccount && targetAccount.service !== "symphony") {
+          throw new Error("ACCOUNT_NOT_SUPPORTED_FOR_SYMPHONY_JOB");
+        }
         const job = store.createDraftJob({
           idempotencyKey: boundedText(body.idempotencyKey || `draft-${randomUUID()}`, "IDEMPOTENCY_KEY", 160),
           accountId,

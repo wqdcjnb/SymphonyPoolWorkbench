@@ -23,7 +23,9 @@ if ($null -eq $process) {
 }
 
 $serverPath = Join-Path $ProjectRoot 'server.mjs'
-if ($process.Name -ne 'node.exe' -or $process.CommandLine -notlike '*server.mjs*') {
+if ($process.Name -ne 'node.exe' -or
+    [string]::IsNullOrEmpty($process.CommandLine) -or
+    $process.CommandLine.IndexOf($serverPath, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) {
   throw "PID $processId 不是工作台 Node 进程，拒绝停止。"
 }
 
