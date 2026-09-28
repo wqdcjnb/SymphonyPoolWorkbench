@@ -21,6 +21,12 @@ const MODEL_OPTIONS = new Set([
   "Dreamina Seedance 2.0 Fast",
   "Video 1.5 Pro",
 ]);
+const DOUBAO_MODEL_OPTIONS = new Set([
+  "Seedance 2.5",
+  "Seedance 2.0",
+  "Seedance 2.0 Fast",
+  "Seedance 2.0 Mini",
+]);
 const MODE_OPTIONS = new Set(["reference_to_video", "image_to_video", "text_to_video"]);
 
 const MIME_TYPES = {
@@ -89,10 +95,11 @@ function sameOriginAllowed(request, host, port) {
   return new Set([`http://${host}:${port}`, `http://localhost:${port}`, `http://127.0.0.1:${port}`]).has(origin);
 }
 
-function parseVerifierOutput(stdout) {
+function parseVerifierOutput(stdout, loginType) {
   const lines = String(stdout || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   if (!lines.length) throw new Error("EMPTY_VERIFIER_OUTPUT");
   const parsed = JSON.parse(lines.at(-1));
+  const permittedModels = loginType === "doubao" ? DOUBAO_MODEL_OPTIONS : MODEL_OPTIONS;
   return {
     ok: Boolean(parsed.ok),
     loggedIn: Boolean(parsed.loggedIn),
@@ -101,9 +108,13 @@ function parseVerifierOutput(stdout) {
     remainingCredits: Number.isInteger(parsed.remainingCredits) ? parsed.remainingCredits : null,
     totalCredits: Number.isInteger(parsed.totalCredits) ? parsed.totalCredits : null,
     nextRefresh: typeof parsed.nextRefresh === "string" ? parsed.nextRefresh : null,
+    videosCreatedToday: Number.isInteger(parsed.videosCreatedToday) && parsed.videosCreatedToday >= 0
+      ? parsed.videosCreatedToday : null,
+    videoCountDate: typeof parsed.videoCountDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(parsed.videoCountDate)
+      ? parsed.videoCountDate : null,
     referenceImageLimit: Number.isInteger(parsed.referenceImageLimit) ? parsed.referenceImageLimit : null,
     modelsObserved: Array.isArray(parsed.modelsObserved)
-      ? parsed.modelsObserved.filter((item) => MODEL_OPTIONS.has(item))
+      ? parsed.modelsObserved.filter((item) => permittedModels.has(item))
       : [],
     stage: typeof parsed.stage === "string" ? parsed.stage.slice(0, 80) : null,
     error: typeof parsed.error === "string" ? parsed.error.slice(0, 160) : null,
@@ -153,7 +164,7 @@ export function createWorkbenchServer(options = {}) {
       stdout = typeof error.stdout === "string" ? error.stdout : "";
       if (!stdout.trim()) throw new Error(error.killed ? "VERIFIER_TIMEOUT" : "VERIFIER_FAILED");
     }
-    return parseVerifierOutput(stdout);
+    return parseVerifierOutput(stdout, account.loginType);
   };
 
   const server = http.createServer(async (request, response) => {

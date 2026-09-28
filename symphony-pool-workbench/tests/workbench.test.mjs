@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { DatabaseSync } from "node:sqlite";
 import { createStore } from "../lib/db.mjs";
 
 test("账号验收、草稿和审计流水写入同一 SQLite", () => {
@@ -49,6 +50,47 @@ test("账号验收、草稿和审计流水写入同一 SQLite", () => {
     assert.equal(store.overview().accounts.ready, 1);
     assert.equal(store.overview().jobs.draft, 1);
     assert.ok(store.listEvents().length >= 4);
+  } finally {
+    store.close();
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("旧版账号数据库升级后保留账号并加入豆包视频字段", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "symphony-migration-"));
+  const databasePath = path.join(tempRoot, "legacy.sqlite");
+  const legacy = new DatabaseSync(databasePath);
+  legacy.exec(`CREATE TABLE accounts (
+    id TEXT PRIMARY KEY, label TEXT NOT NULL, login_type TEXT NOT NULL,
+    service TEXT NOT NULL, worker_id TEXT NOT NULL, profile_path TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL, health_score INTEGER NOT NULL DEFAULT 0,
+    credits_remaining INTEGER, credits_total INTEGER, credits_reset_at TEXT,
+    reference_image_limit INTEGER, models_json TEXT NOT NULL DEFAULT '[]',
+    last_verified_at INTEGER, last_error_code TEXT,
+    created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+  )`);
+  legacy.prepare(`INSERT INTO accounts
+    (id,label,login_type,service,worker_id,profile_path,status,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?)`).run(
+    "old-doubao", "旧豆包账号", "doubao", "doubao", "pc", path.join(tempRoot, "profile"),
+    "ready", 1, 1,
+  );
+  legacy.close();
+
+  const store = createStore(databasePath);
+  try {
+    assert.equal(store.getAccount("old-doubao").label, "旧豆包账号");
+    store.saveVerification("old-doubao", {
+      ok: true, loggedIn: true, creditPageReady: true, createPageReady: true,
+      remainingCredits: null, totalCredits: null, nextRefresh: "2026-09-30T00:00:00+08:00",
+      videosCreatedToday: 3, videoCountDate: "2026-09-29",
+      referenceImageLimit: null, modelsObserved: ["Seedance 2.0 Fast"],
+    });
+    const account = store.getAccount("old-doubao");
+    assert.equal(account.videosCreatedToday, 3);
+    assert.equal(account.creditPageReady, true);
+    assert.equal(account.createPageReady, true);
+    assert.deepEqual(account.models, ["Seedance 2.0 Fast"]);
   } finally {
     store.close();
     fs.rmSync(tempRoot, { recursive: true, force: true });

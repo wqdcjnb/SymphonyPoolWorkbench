@@ -37,6 +37,8 @@ function asAccount(row) {
   if (!row) return null;
   return {
     ...row,
+    creditPageReady: Boolean(row.creditPageReady),
+    createPageReady: Boolean(row.createPageReady),
     models: parseJson(row.modelsJson, []),
     modelsJson: undefined,
   };
@@ -71,6 +73,10 @@ export function createStore(databasePath) {
       credits_remaining INTEGER,
       credits_total INTEGER,
       credits_reset_at TEXT,
+      videos_created_today INTEGER,
+      video_count_date TEXT,
+      credit_page_ready INTEGER NOT NULL DEFAULT 0,
+      create_page_ready INTEGER NOT NULL DEFAULT 0,
       reference_image_limit INTEGER,
       models_json TEXT NOT NULL DEFAULT '[]',
       last_verified_at INTEGER,
@@ -112,6 +118,18 @@ export function createStore(databasePath) {
 
     CREATE INDEX IF NOT EXISTS events_recent_idx ON events(created_at DESC);
   `);
+
+  // Existing installations already have an accounts table. Add the new
+  // read-only video fields without replacing their account or job data.
+  const accountColumns = new Set(db.prepare("PRAGMA table_info(accounts)").all().map((column) => column.name));
+  for (const [column, definition] of [
+    ["videos_created_today", "INTEGER"],
+    ["video_count_date", "TEXT"],
+    ["credit_page_ready", "INTEGER NOT NULL DEFAULT 0"],
+    ["create_page_ready", "INTEGER NOT NULL DEFAULT 0"],
+  ]) {
+    if (!accountColumns.has(column)) db.exec(`ALTER TABLE accounts ADD COLUMN ${column} ${definition}`);
+  }
 
   const transaction = (callback) => {
     db.exec("BEGIN IMMEDIATE");
@@ -158,6 +176,8 @@ export function createStore(databasePath) {
           worker_id AS workerId, profile_path AS profilePath, status,
           health_score AS healthScore, credits_remaining AS creditsRemaining,
           credits_total AS creditsTotal, credits_reset_at AS creditsResetAt,
+          videos_created_today AS videosCreatedToday, video_count_date AS videoCountDate,
+          credit_page_ready AS creditPageReady, create_page_ready AS createPageReady,
           reference_image_limit AS referenceImageLimit, models_json AS modelsJson,
           last_verified_at AS lastVerifiedAt, last_error_code AS lastErrorCode,
           created_at AS createdAt, updated_at AS updatedAt FROM accounts WHERE id=?`).get(input.id));
@@ -169,6 +189,8 @@ export function createStore(databasePath) {
         worker_id AS workerId, profile_path AS profilePath, status,
         health_score AS healthScore, credits_remaining AS creditsRemaining,
         credits_total AS creditsTotal, credits_reset_at AS creditsResetAt,
+        videos_created_today AS videosCreatedToday, video_count_date AS videoCountDate,
+        credit_page_ready AS creditPageReady, create_page_ready AS createPageReady,
         reference_image_limit AS referenceImageLimit, models_json AS modelsJson,
         last_verified_at AS lastVerifiedAt, last_error_code AS lastErrorCode,
         created_at AS createdAt, updated_at AS updatedAt FROM accounts WHERE id=?`).get(id));
@@ -179,6 +201,8 @@ export function createStore(databasePath) {
         worker_id AS workerId, profile_path AS profilePath, status,
         health_score AS healthScore, credits_remaining AS creditsRemaining,
         credits_total AS creditsTotal, credits_reset_at AS creditsResetAt,
+        videos_created_today AS videosCreatedToday, video_count_date AS videoCountDate,
+        credit_page_ready AS creditPageReady, create_page_ready AS createPageReady,
         reference_image_limit AS referenceImageLimit, models_json AS modelsJson,
         last_verified_at AS lastVerifiedAt, last_error_code AS lastErrorCode,
         created_at AS createdAt, updated_at AS updatedAt
@@ -201,10 +225,14 @@ export function createStore(databasePath) {
           : new Set(["LOGIN_REQUIRED", "PROFILE_NOT_FOUND"]).has(result.error) ? "auth_required" : "error";
       return transaction(() => {
         const updated = db.prepare(`UPDATE accounts SET status=?, health_score=?,
-          credits_remaining=?, credits_total=?, credits_reset_at=?, reference_image_limit=?,
+          credits_remaining=?, credits_total=?, credits_reset_at=?,
+          videos_created_today=?, video_count_date=?, credit_page_ready=?, create_page_ready=?,
+          reference_image_limit=?,
           models_json=?, last_verified_at=?, last_error_code=?, updated_at=? WHERE id=?`)
           .run(status, result.ok ? 100 : 25, result.remainingCredits, result.totalCredits,
-            result.nextRefresh, result.referenceImageLimit, JSON.stringify(result.modelsObserved || []),
+            result.nextRefresh, result.videosCreatedToday ?? null, result.videoCountDate ?? null,
+            result.creditPageReady ? 1 : 0, result.createPageReady ? 1 : 0,
+            result.referenceImageLimit, JSON.stringify(result.modelsObserved || []),
             timestamp, result.error || null, timestamp, id);
         if (!updated.changes) throw new Error("ACCOUNT_NOT_FOUND");
         insertEvent({
@@ -216,6 +244,8 @@ export function createStore(databasePath) {
             stage: result.stage || null,
             remainingCredits: result.remainingCredits ?? null,
             totalCredits: result.totalCredits ?? null,
+            videosCreatedToday: result.videosCreatedToday ?? null,
+            videoCountDate: result.videoCountDate ?? null,
             error: result.error || null,
           },
         });

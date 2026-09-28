@@ -79,7 +79,12 @@ test("Doubao accounts use their verifier and cannot receive Symphony drafts", as
   const port = await freePort();
   const verifierPath = path.join(tempRoot, "doubao-verifier.mjs");
   const tikTokVerifierPath = path.join(tempRoot, "tiktok-verifier.mjs");
-  fs.writeFileSync(verifierPath, 'console.log(JSON.stringify({ok:true,loggedIn:true,modelsObserved:[],stage:"completed"}));');
+  fs.writeFileSync(verifierPath, `console.log(JSON.stringify({
+    ok:true, loggedIn:true, creditPageReady:true, createPageReady:true,
+    videosCreatedToday:2, videoCountDate:"2026-09-29",
+    nextRefresh:"2026-09-30T00:00:00+08:00", referenceImageLimit:null,
+    modelsObserved:["Seedance 2.0 Fast","Seedance 2.0 Mini","Unknown model"], stage:"completed"
+  }));`);
   fs.writeFileSync(tikTokVerifierPath, 'throw new Error("wrong verifier");');
   const app = createWorkbenchServer({
     port,
@@ -118,7 +123,13 @@ test("Doubao accounts use their verifier and cannot receive Symphony drafts", as
     assert.equal(verified.status, 200);
     assert.equal(verified.body.account.status, "ready");
     assert.equal(verified.body.account.creditsRemaining, null);
-    assert.deepEqual(verified.body.account.models, []);
+    assert.equal(verified.body.account.videosCreatedToday, 2);
+    assert.equal(verified.body.account.videoCountDate, "2026-09-29");
+    assert.equal(verified.body.account.creditsResetAt, "2026-09-30T00:00:00+08:00");
+    assert.equal(verified.body.account.creditPageReady, true);
+    assert.equal(verified.body.account.createPageReady, true);
+    assert.deepEqual(verified.body.account.models, ["Seedance 2.0 Fast", "Seedance 2.0 Mini"]);
+    assert.equal(app.store.overview().accounts.availableCredits, 0);
     assert.equal(app.store.overview().accounts.needsAttention, 1);
 
     fs.writeFileSync(verifierPath, 'console.log(JSON.stringify({ok:false,loggedIn:false,error:"LOGIN_REQUIRED"}));');

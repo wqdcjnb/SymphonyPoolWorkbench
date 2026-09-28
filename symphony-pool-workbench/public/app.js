@@ -22,6 +22,8 @@ const $ = (selector) => document.querySelector(selector);
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[char]);
 const formatNumber = (value) => new Intl.NumberFormat("zh-CN").format(Number(value || 0));
 const formatTime = (value) => value ? new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(value)) : "尚未验收";
+const beijingDate = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+const formatBeijingTime = (value) => value ? new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(value)) : "待读取";
 const isDoubao = (account) => account.service === "doubao" || account.loginType === "doubao";
 
 const errorMessage = {
@@ -31,6 +33,10 @@ const errorMessage = {
   BROWSER_LAUNCH_FAILED: "无法启动 Chrome 或 Edge，请检查浏览器安装。",
   DOUBAO_PAGE_TIMEOUT: "豆包页面加载超时，请检查网络后重试。",
   DOUBAO_PAGE_NOT_READY: "豆包页面未准备好，请稍后重试。",
+  DOUBAO_VIDEO_PAGE_NOT_READY: "豆包视频生成页未准备好，请稍后重试。",
+  DOUBAO_FREE_MODEL_NOT_FOUND: "未读到免费可用的视频模型，请检查豆包页面。",
+  DOUBAO_HISTORY_PAGE_NOT_READY: "豆包创作记录页未准备好，请稍后重试。",
+  DOUBAO_HISTORY_INCOMPLETE: "未能完整统计今日视频作品，请稍后重试。",
   PYTHON_NOT_CONFIGURED: "未找到 Python 环境，请按 README 安装验收依赖。",
   ACCOUNT_ALREADY_EXISTS: "账号编号已存在，请换一个编号。",
 };
@@ -55,7 +61,7 @@ function toast(message, isError = false) {
 
 function statusBadge(account) {
   const label = account.lastErrorCode === "PROFILE_IN_USE" ? "窗口未关闭"
-    : isDoubao(account) && account.status === "ready" ? "已登录" : statusLabel[account.status] || account.status;
+    : isDoubao(account) && account.status === "ready" ? "视频验收通过" : statusLabel[account.status] || account.status;
   return `<span class="status status-${escapeHtml(account.status)}"><i></i>${escapeHtml(label)}</span>`;
 }
 
@@ -78,12 +84,21 @@ function accountCard(account, compact = false) {
   const total = Number(account.creditsTotal || 0);
   const percent = total > 0 ? Math.max(0, Math.min(100, Math.round((remaining / total) * 100))) : 0;
   const models = (account.models || []).map((model) => `<span class="tag">${escapeHtml(model.replace("Dreamina ", ""))}</span>`).join("") || '<span class="muted">验收后显示模型</span>';
+  const doubaoCount = account.videoCountDate === beijingDate() && Number.isInteger(account.videosCreatedToday)
+    ? `${formatNumber(account.videosCreatedToday)} 条` : "待读取";
   const capability = doubao
-    ? '<div class="account-capability"><span>验收范围</span><strong>豆包网页版登录状态</strong></div><p class="account-note">积分、模型和生成任务尚未接入豆包。</p>'
+    ? `<div class="account-capability"><span>今日已生成视频 · 北京时间</span><strong>${escapeHtml(doubaoCount)}</strong></div>
+      <p class="account-note">每日总额度和剩余次数${Number.isInteger(account.creditsTotal) && Number.isInteger(account.creditsRemaining)
+        ? `：${formatNumber(account.creditsRemaining)} / ${formatNumber(account.creditsTotal)}`
+        : "：网页未显示，暂不估算"}。生成任务尚未接入。</p>`
     : `<div class="credit-line"><div><span>可用积分</span><strong>${total ? `${formatNumber(remaining)} / ${formatNumber(total)}` : "待读取"}</strong></div><span>${percent}%</span></div>
       <progress class="progress" value="${remaining}" max="${total || 1}" aria-label="积分剩余 ${percent}%">${percent}%</progress>`;
   const accountDetails = doubao
-    ? `<div class="account-meta"><span>档案 · ${escapeHtml(account.workerId)}</span><span>验收 · ${escapeHtml(formatTime(account.lastVerifiedAt))}</span></div>`
+    ? `<div class="account-meta"><span>档案 · ${escapeHtml(account.workerId)}</span><span>验收 · ${escapeHtml(formatTime(account.lastVerifiedAt))}</span>
+      <span>创作记录 · ${account.creditPageReady ? "已读取" : "待读取"}</span><span>视频入口 · ${account.createPageReady ? "已读取" : "待读取"}</span>
+      <span>次日重置 · ${escapeHtml(formatBeijingTime(account.creditsResetAt))}</span>
+      <span>参考图上限 · ${account.referenceImageLimit == null ? "网页未显示" : `${formatNumber(account.referenceImageLimit)} 张`}</span></div>
+      <div class="tag-row">${models}</div>`
     : `<div class="account-meta"><span>档案 · ${escapeHtml(account.workerId)}</span><span>验收 · ${escapeHtml(formatTime(account.lastVerifiedAt))}</span><span>刷新 · ${escapeHtml(account.creditsResetAt || "待读取")}</span></div><div class="tag-row">${models}</div>`;
   const lastError = account.lastErrorCode
     ? `<p class="account-error">${escapeHtml(readableError(account.lastErrorCode))}</p>` : "";
