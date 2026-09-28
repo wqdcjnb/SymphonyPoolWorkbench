@@ -81,6 +81,7 @@ h1 { margin: 0; font-size: clamp(30px, 4vw, 48px); line-height: 1; letter-spacin
 .account-top, .credit-line, .account-actions, .job-head, .job-meta, .event-title { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
 .account-code { color: var(--muted); font-size: 10px; letter-spacing: .1em; }
 .account-top h3 { margin: 5px 0 0; font-size: 17px; }
+.platform-label { display: inline-block; margin-top: 7px; color: var(--violet); font-size: 10px; }
 .status { display: inline-flex; align-items: center; gap: 7px; padding: 6px 9px; border-radius: 99px; border: 1px solid var(--line); color: var(--muted); background: rgba(255,255,255,.03); font-size: 10px; }
 .status i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .status-ready { color: var(--mint); background: rgba(112,240,183,.07); }
@@ -91,6 +92,11 @@ h1 { margin: 0; font-size: clamp(30px, 4vw, 48px); line-height: 1; letter-spacin
 .credit-line div span { display: block; color: var(--muted); font-size: 10px; }
 .credit-line strong { display: block; margin-top: 4px; font-size: 18px; }
 .credit-line > span { color: var(--mint); font-size: 12px; }
+.account-capability { margin: 22px 0 8px; }
+.account-capability span { display: block; color: var(--muted); font-size: 10px; }
+.account-capability strong { display: block; margin-top: 5px; font-size: 17px; }
+.account-note { margin: 0 0 17px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.account-error { margin: 14px 0 0; color: var(--rose); font-size: 11px; line-height: 1.5; }
 .progress { display: block; width: 100%; height: 5px; border: 0; border-radius: 99px; overflow: hidden; margin: 10px 0 16px; appearance: none; background: rgba(255,255,255,.06); color: var(--mint); }
 .progress::-webkit-progress-bar { border-radius: 99px; background: rgba(255,255,255,.06); }
 .progress::-webkit-progress-value { border-radius: 99px; background: linear-gradient(90deg, var(--mint), #b4ffdc); }

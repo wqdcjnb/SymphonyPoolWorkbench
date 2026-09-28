@@ -30,7 +30,7 @@ $BrowserPath = $candidatePaths |
   Select-Object -First 1
 
 if ([string]::IsNullOrWhiteSpace($BrowserPath)) {
-  throw '未找到 Google Chrome 或 Microsoft Edge。'
+  throw 'Google Chrome or Microsoft Edge was not found.'
 }
 
 if (-not (Test-Path -LiteralPath $ProfilePath -PathType Container)) {

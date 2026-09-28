@@ -34,7 +34,7 @@
         <div>
           <p class="eyebrow">CONTROL PLANE / MVP 01</p>
           <h1>Symphony 号池工作台</h1>
-          <p class="subtitle">账号、额度、健康检查与任务草稿的独立控制面</p>
+          <p class="subtitle">Symphony 与豆包账号的本地档案、只读验收和状态管理</p>
         </div>
         <div class="top-actions">
           <span class="safe-pill">自动生成未启用</span>
@@ -63,12 +63,12 @@
       </section>
 
       <section id="accounts" class="panel-section">
-        <div class="section-heading"><div><span class="kicker">ACCOUNT REGISTRY</span><h2>账号池</h2></div><p>一个账号固定绑定一个浏览器档案；同一账号并发上限为1。</p></div>
+        <div class="section-heading"><div><span class="kicker">ACCOUNT REGISTRY</span><h2>账号池</h2></div><p>每个账号使用独立浏览器档案；登录完成后关闭窗口，再进行只读验收。</p></div>
         <div id="accountGrid" class="account-grid"></div>
       </section>
 
       <section id="jobs" class="panel-section">
-        <div class="section-heading"><div><span class="kicker">DRAFT QUEUE</span><h2>任务草稿</h2></div><p>仅保存参数，不调用第三方、不消耗积分。</p></div>
+        <div class="section-heading"><div><span class="kicker">DRAFT QUEUE</span><h2>Symphony 任务草稿</h2></div><p>仅保存 Symphony 参数，不调用第三方、不消耗积分。</p></div>
         <div class="two-column jobs-layout">
           <form id="jobForm" class="panel form-panel">
             <div class="field-row">
@@ -98,11 +98,11 @@
   <dialog id="accountDialog">
     <form id="accountForm" method="dialog">
       <div class="dialog-heading"><div><span class="kicker">NEW PROFILE</span><h2>新增账号档案</h2></div><button class="icon-button" id="closeAccountDialogButton" type="button" aria-label="关闭">×</button></div>
-      <label>账号编号<input name="accountId" required pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,127}" placeholder="xzkj-pc-01-symphony-02"></label>
-      <label>显示名称<input name="label" required maxlength="80" placeholder="Symphony TK 二号账号"></label>
-      <label>登录类型<select name="loginType"><option value="tiktok">TikTok</option><option value="doubao">豆包</option></select></label>
+      <label>账号编号<input id="accountIdInput" name="accountId" required pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,127}" placeholder="xzkj-pc-01-symphony-02"></label>
+      <label>显示名称<input id="accountLabelInput" name="label" required maxlength="80" placeholder="Symphony TK 二号账号"></label>
+      <label>账号平台<select id="accountLoginType" name="loginType"><option value="tiktok">TikTok Symphony</option><option value="doubao">豆包网页版</option></select></label>
       <label>电脑编号<input name="workerId" value="xzkj-pc-01" required></label>
-      <p class="dialog-note">创建后点击“打开登录窗口”，由你手动完成登录。工作台不会接收账号密码。</p>
+      <p class="dialog-note" id="accountDialogNote">创建后打开独立 Symphony 窗口，由你手动登录。关闭窗口后点击只读验收；工作台不接收密码或 Cookie。</p>
       <button class="button primary wide" type="submit">建立档案记录</button>
     </form>
   </dialog>

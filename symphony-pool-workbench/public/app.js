@@ -22,6 +22,19 @@ const $ = (selector) => document.querySelector(selector);
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[char]);
 const formatNumber = (value) => new Intl.NumberFormat("zh-CN").format(Number(value || 0));
 const formatTime = (value) => value ? new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(value)) : "尚未验收";
+const isDoubao = (account) => account.service === "doubao" || account.loginType === "doubao";
+
+const errorMessage = {
+  LOGIN_REQUIRED: "尚未登录。请在专用窗口完成登录，关闭窗口后再验收。",
+  PROFILE_IN_USE: "专用浏览器档案仍在使用。请先关闭登录窗口，再点击只读验收。",
+  PROFILE_NOT_FOUND: "尚未建立浏览器档案。请先打开登录窗口。",
+  BROWSER_LAUNCH_FAILED: "无法启动 Chrome 或 Edge，请检查浏览器安装。",
+  DOUBAO_PAGE_TIMEOUT: "豆包页面加载超时，请检查网络后重试。",
+  DOUBAO_PAGE_NOT_READY: "豆包页面未准备好，请稍后重试。",
+  PYTHON_NOT_CONFIGURED: "未找到 Python 环境，请按 README 安装验收依赖。",
+  ACCOUNT_ALREADY_EXISTS: "账号编号已存在，请换一个编号。",
+};
+const readableError = (code) => errorMessage[code] || code;
 
 async function api(url, options = {}) {
   const response = await fetch(url, {
@@ -40,17 +53,19 @@ function toast(message, isError = false) {
   window.setTimeout(() => { node.className = ""; }, 3200);
 }
 
-function statusBadge(status) {
-  return `<span class="status status-${escapeHtml(status)}"><i></i>${escapeHtml(statusLabel[status] || status)}</span>`;
+function statusBadge(account) {
+  const label = account.lastErrorCode === "PROFILE_IN_USE" ? "窗口未关闭"
+    : isDoubao(account) && account.status === "ready" ? "已登录" : statusLabel[account.status] || account.status;
+  return `<span class="status status-${escapeHtml(account.status)}"><i></i>${escapeHtml(label)}</span>`;
 }
 
 function renderMetrics() {
   const summary = state.overview || { accounts: {}, jobs: {} };
   const metrics = [
-    ["可用账号", summary.accounts.ready || 0, `共 ${summary.accounts.total || 0} 个档案`, "mint"],
-    ["可用积分", formatNumber(summary.accounts.availableCredits || 0), "按最近验收汇总", "violet"],
-    ["任务草稿", summary.jobs.draft || 0, "尚未提交生成", "amber"],
-    ["待人工处理", summary.accounts.authRequired || 0, "登录或验证", "rose"],
+    ["已验收账号", summary.accounts.ready || 0, `共 ${summary.accounts.total || 0} 个档案`, "mint"],
+    ["Symphony 积分", formatNumber(summary.accounts.availableCredits || 0), "仅统计 Symphony 账号", "violet"],
+    ["Symphony 草稿", summary.jobs.draft || 0, "尚未提交生成", "amber"],
+    ["待人工处理", summary.accounts.needsAttention || 0, "登录、验收或修复", "rose"],
   ];
   $("#metricGrid").innerHTML = metrics.map(([label, value, note, tone]) => `
     <article class="metric-card ${tone}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(note)}</small></article>
@@ -58,16 +73,25 @@ function renderMetrics() {
 }
 
 function accountCard(account, compact = false) {
+  const doubao = isDoubao(account);
   const remaining = Number(account.creditsRemaining || 0);
   const total = Number(account.creditsTotal || 0);
   const percent = total > 0 ? Math.max(0, Math.min(100, Math.round((remaining / total) * 100))) : 0;
   const models = (account.models || []).map((model) => `<span class="tag">${escapeHtml(model.replace("Dreamina ", ""))}</span>`).join("") || '<span class="muted">验收后显示模型</span>';
+  const capability = doubao
+    ? '<div class="account-capability"><span>验收范围</span><strong>豆包网页版登录状态</strong></div><p class="account-note">积分、模型和生成任务尚未接入豆包。</p>'
+    : `<div class="credit-line"><div><span>可用积分</span><strong>${total ? `${formatNumber(remaining)} / ${formatNumber(total)}` : "待读取"}</strong></div><span>${percent}%</span></div>
+      <progress class="progress" value="${remaining}" max="${total || 1}" aria-label="积分剩余 ${percent}%">${percent}%</progress>`;
+  const accountDetails = doubao
+    ? `<div class="account-meta"><span>档案 · ${escapeHtml(account.workerId)}</span><span>验收 · ${escapeHtml(formatTime(account.lastVerifiedAt))}</span></div>`
+    : `<div class="account-meta"><span>档案 · ${escapeHtml(account.workerId)}</span><span>验收 · ${escapeHtml(formatTime(account.lastVerifiedAt))}</span><span>刷新 · ${escapeHtml(account.creditsResetAt || "待读取")}</span></div><div class="tag-row">${models}</div>`;
+  const lastError = account.lastErrorCode
+    ? `<p class="account-error">${escapeHtml(readableError(account.lastErrorCode))}</p>` : "";
   return `<div class="account-card ${compact ? "compact-account" : ""}">
-    <div class="account-top"><div><span class="account-code">${escapeHtml(account.id)}</span><h3>${escapeHtml(account.label)}</h3></div>${statusBadge(account.status)}</div>
-    <div class="credit-line"><div><span>可用积分</span><strong>${total ? `${formatNumber(remaining)} / ${formatNumber(total)}` : "待读取"}</strong></div><span>${percent}%</span></div>
-    <progress class="progress" value="${remaining}" max="${total || 1}" aria-label="积分剩余 ${percent}%">${percent}%</progress>
-    <div class="account-meta"><span>档案 · ${escapeHtml(account.workerId)}</span><span>验收 · ${escapeHtml(formatTime(account.lastVerifiedAt))}</span><span>刷新 · ${escapeHtml(account.creditsResetAt || "待读取")}</span></div>
-    <div class="tag-row">${models}</div>
+    <div class="account-top"><div><span class="account-code">${escapeHtml(account.id)}</span><h3>${escapeHtml(account.label)}</h3><span class="platform-label">${doubao ? "豆包网页版" : "TikTok Symphony"}</span></div>${statusBadge(account)}</div>
+    ${capability}
+    ${accountDetails}
+    ${lastError}
     <div class="account-actions">
       <button class="button ghost small" data-action="open" data-account="${escapeHtml(account.id)}">打开登录窗口</button>
       <button class="button primary small" data-action="verify" data-account="${escapeHtml(account.id)}" ${account.status === "checking" ? "disabled" : ""}>只读验收</button>
@@ -79,8 +103,9 @@ function renderAccounts() {
   $("#accountGrid").innerHTML = state.accounts.length
     ? state.accounts.map((account) => accountCard(account)).join("")
     : '<div class="empty">还没有账号档案。</div>';
-  $("#primaryAccount").innerHTML = state.accounts[0] ? accountCard(state.accounts[0], true) : '<div class="empty">等待账号接入</div>';
-  $("#jobAccount").innerHTML = '<option value="">自动选择（执行层启用后）</option>' + state.accounts.map((account) => `<option value="${escapeHtml(account.id)}">${escapeHtml(account.label)}</option>`).join("");
+  const primary = state.accounts.find((account) => !isDoubao(account)) || state.accounts[0];
+  $("#primaryAccount").innerHTML = primary ? accountCard(primary, true) : '<div class="empty">等待账号接入</div>';
+  $("#jobAccount").innerHTML = '<option value="">自动选择（执行层启用后）</option>' + state.accounts.filter((account) => !isDoubao(account)).map((account) => `<option value="${escapeHtml(account.id)}">${escapeHtml(account.label)}</option>`).join("");
   $("#updatedAt").textContent = `刷新于 ${new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(new Date())}`;
 }
 
@@ -124,7 +149,7 @@ async function accountAction(action, accountId, button) {
     toast(action === "verify" ? "只读验收通过" : "专用登录窗口已打开");
     await refresh();
   } catch (error) {
-    toast(`操作失败：${error.message}`, true);
+    toast(`操作失败：${readableError(error.message)}`, true);
     await refresh().catch(() => {});
   } finally {
     button.disabled = false;
@@ -155,8 +180,18 @@ document.addEventListener("click", async (event) => {
 });
 
 $("#refreshButton").addEventListener("click", () => refresh().then(() => toast("数据已刷新")).catch((error) => toast(error.message, true)));
-$("#addAccountButton").addEventListener("click", () => $("#accountDialog").showModal());
+function updateAccountFormHint() {
+  const doubao = $("#accountLoginType").value === "doubao";
+  $("#accountIdInput").placeholder = doubao ? "xzkj-pc-01-doubao-01" : "xzkj-pc-01-symphony-02";
+  $("#accountLabelInput").placeholder = doubao ? "豆包一号账号" : "Symphony TK 二号账号";
+  $("#accountDialogNote").textContent = doubao
+    ? "创建后打开独立豆包窗口，由你手动登录。关闭窗口后点击只读验收；工作台不接收密码或 Cookie。"
+    : "创建后打开独立 Symphony 窗口，由你手动登录。关闭窗口后点击只读验收；工作台不接收密码或 Cookie。";
+}
+
+$("#addAccountButton").addEventListener("click", () => { updateAccountFormHint(); $("#accountDialog").showModal(); });
 $("#closeAccountDialogButton").addEventListener("click", () => $("#accountDialog").close());
+$("#accountLoginType").addEventListener("change", updateAccountFormHint);
 
 $("#accountForm").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -165,9 +200,10 @@ $("#accountForm").addEventListener("submit", async (event) => {
     await api("/api/accounts", { method: "POST", body: JSON.stringify(Object.fromEntries(form)) });
     $("#accountDialog").close();
     event.currentTarget.reset();
+    updateAccountFormHint();
     toast("账号档案记录已建立");
     await refresh();
-  } catch (error) { toast(`创建失败：${error.message}`, true); }
+  } catch (error) { toast(`创建失败：${readableError(error.message)}`, true); }
 });
 
 $("#jobForm").addEventListener("submit", async (event) => {

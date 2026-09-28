@@ -199,6 +199,7 @@ export function createWorkbenchServer(options = {}) {
         const loginType = body.loginType || "tiktok";
         if (!LOGIN_TYPES.has(loginType)) throw new Error("INVALID_LOGIN_TYPE");
         const workerId = boundedText(body.workerId || DEFAULT_WORKER_ID, "WORKER_ID", 128);
+        if (store.getAccount(id)) throw new Error("ACCOUNT_ALREADY_EXISTS");
         const account = store.ensureAccount({
           id,
           label,
@@ -315,7 +316,7 @@ export function createWorkbenchServer(options = {}) {
         }
         response.writeHead(200, {
           "Content-Type": MIME_TYPES[path.extname(filePath)] || "application/octet-stream",
-          "Cache-Control": filePath.endsWith("index.html") ? "no-store" : "public, max-age=300",
+          "Cache-Control": "no-store",
         });
         return fs.createReadStream(filePath).pipe(response);
       }
@@ -324,7 +325,7 @@ export function createWorkbenchServer(options = {}) {
     } catch (error) {
       const code = String(error.message || "INTERNAL_ERROR").slice(0, 160);
       const status = code.includes("NOT_FOUND") ? 404
-        : code.includes("NOT_CANCELLABLE") || code.includes("ALREADY_RUNNING") ? 409
+        : code.includes("NOT_CANCELLABLE") || code.includes("ALREADY_RUNNING") || code === "ACCOUNT_ALREADY_EXISTS" ? 409
           : code === "PAYLOAD_TOO_LARGE" ? 413
             : code === "INTERNAL_ERROR" ? 500 : 400;
       return json(response, status, { error: code });

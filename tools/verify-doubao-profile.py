@@ -59,7 +59,11 @@ def main() -> int:
                 break
             except Exception as error:
                 detail = str(error).lower()
-                if "processsingleton" in detail or "user data directory is already in use" in detail:
+                if (
+                    "processsingleton" in detail
+                    or "user data directory is already in use" in detail
+                    or ("exitcode=0" in detail and (profile_path / "lockfile").exists())
+                ):
                     summary["error"] = "PROFILE_IN_USE"
                     break
         if context is None:

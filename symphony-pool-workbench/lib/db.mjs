@@ -196,7 +196,9 @@ export function createStore(databasePath) {
 
     saveVerification(id, result) {
       const timestamp = Date.now();
-      const status = result.ok ? "ready" : result.loggedIn ? "degraded" : "auth_required";
+      const status = result.ok ? "ready"
+        : result.loggedIn ? "degraded"
+          : new Set(["LOGIN_REQUIRED", "PROFILE_NOT_FOUND"]).has(result.error) ? "auth_required" : "error";
       return transaction(() => {
         const updated = db.prepare(`UPDATE accounts SET status=?, health_score=?,
           credits_remaining=?, credits_total=?, credits_reset_at=?, reference_image_limit=?,
@@ -306,6 +308,7 @@ export function createStore(databasePath) {
       const accounts = db.prepare(`SELECT COUNT(*) AS total,
         SUM(CASE WHEN status='ready' THEN 1 ELSE 0 END) AS ready,
         SUM(CASE WHEN status='auth_required' THEN 1 ELSE 0 END) AS authRequired,
+        SUM(CASE WHEN status IN ('provisioning','auth_required','degraded','error') THEN 1 ELSE 0 END) AS needsAttention,
         COALESCE(SUM(CASE WHEN service='symphony' AND status='ready' THEN credits_remaining ELSE 0 END), 0) AS availableCredits
         FROM accounts`).get();
       const jobs = db.prepare(`SELECT COUNT(*) AS total,
@@ -317,6 +320,7 @@ export function createStore(databasePath) {
           total: Number(accounts.total || 0),
           ready: Number(accounts.ready || 0),
           authRequired: Number(accounts.authRequired || 0),
+          needsAttention: Number(accounts.needsAttention || 0),
           availableCredits: Number(accounts.availableCredits || 0),
         },
         jobs: {
