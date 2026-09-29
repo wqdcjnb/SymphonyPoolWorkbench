@@ -85,21 +85,20 @@ function accountCard(account, compact = false) {
   const doubao = isDoubao(account);
   const remaining = Number(account.creditsRemaining || 0);
   const total = Number(account.creditsTotal || 0);
-  const percent = total > 0 ? Math.max(0, Math.min(100, Math.round((remaining / total) * 100))) : 0;
+  const todayVerified = account.videoCountDate === beijingDate();
+  const balanceKnown = doubao
+    ? todayVerified && account.creditsEstimated && Number.isInteger(account.creditsRemaining) && total > 0
+    : total > 0;
+  const percent = balanceKnown ? Math.max(0, Math.min(100, Math.round((remaining / total) * 100))) : 0;
   const models = (account.models || []).map((model) => `<span class="tag">${escapeHtml(model.replace("Dreamina ", ""))}</span>`).join("") || '<span class="muted">验收后显示模型</span>';
-  const doubaoCount = account.videoCountDate === beijingDate() && Number.isInteger(account.videosCreatedToday)
+  const doubaoCount = todayVerified && Number.isInteger(account.videosCreatedToday)
     ? `${formatNumber(account.videosCreatedToday)} 条` : "待读取";
-  const doubaoQuota = account.videoCountDate === beijingDate() && account.creditsEstimated
-    && Number.isInteger(account.creditsRemaining) && Number.isInteger(account.creditsTotal)
-    ? `按已生成作品时长估算剩余 ${formatNumber(account.creditsRemaining)} / ${formatNumber(account.creditsTotal)} 额度`
-    : "剩余额度暂无法估算";
-  const capability = doubao
-    ? `<div class="account-capability"><span>今日已生成视频 · 北京时间</span><strong>${escapeHtml(doubaoCount)}</strong></div>
-      <p class="account-note">免费版每日 10 额度，0 点重置；5 秒视频用 1 额度，10 秒视频用 2 额度。${escapeHtml(doubaoQuota)}。生成任务尚未接入。</p>`
-    : `<div class="credit-line"><div><span>可用积分</span><strong>${total ? `${formatNumber(remaining)} / ${formatNumber(total)}` : "待读取"}</strong></div><span>${percent}%</span></div>
-      <progress class="progress" value="${remaining}" max="${total || 1}" aria-label="积分剩余 ${percent}%">${percent}%</progress>`;
+  const balanceLabel = doubao ? "预计剩余额度" : "可用积分";
+  const capability = `<div class="credit-line"><div><span>${balanceLabel}</span><strong>${balanceKnown ? `${formatNumber(remaining)} / ${formatNumber(total)}` : "待读取"}</strong></div><span>${balanceKnown ? `${percent}%` : "—"}</span></div>
+      <progress class="progress" value="${balanceKnown ? remaining : 0}" max="${total || 1}" aria-label="${balanceLabel}${balanceKnown ? ` ${percent}%` : "待读取"}">${balanceKnown ? `${percent}%` : "待读取"}</progress>`;
   const accountDetails = doubao
-    ? `<div class="account-meta"><span>档案 · ${escapeHtml(account.workerId)}</span><span>验收 · ${escapeHtml(formatTime(account.lastVerifiedAt))}</span>
+    ? `<p class="account-note">每日 10 额度，5 秒视频用 1 额度，10 秒视频用 2 额度；余额按今日作品时长估算。生成任务尚未接入。</p>
+      <div class="account-meta"><span>今日已生成视频 · ${escapeHtml(doubaoCount)}</span><span>档案 · ${escapeHtml(account.workerId)}</span><span>验收 · ${escapeHtml(formatTime(account.lastVerifiedAt))}</span>
       <span>创作记录 · ${account.creditPageReady ? "已读取" : "待读取"}</span><span>视频入口 · ${account.createPageReady ? "已读取" : "待读取"}</span>
       <span>次日重置 · ${escapeHtml(formatBeijingTime(account.creditsResetAt))}</span>
       <span>Seedance 2.0 全模态参考 · 最多 9 张（模型规格）</span>
