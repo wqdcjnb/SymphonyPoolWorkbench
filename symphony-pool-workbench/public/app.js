@@ -86,18 +86,21 @@ function accountCard(account, compact = false) {
   const models = (account.models || []).map((model) => `<span class="tag">${escapeHtml(model.replace("Dreamina ", ""))}</span>`).join("") || '<span class="muted">验收后显示模型</span>';
   const doubaoCount = account.videoCountDate === beijingDate() && Number.isInteger(account.videosCreatedToday)
     ? `${formatNumber(account.videosCreatedToday)} 条` : "待读取";
+  const doubaoQuota = account.videoCountDate === beijingDate() && account.creditsEstimated
+    && Number.isInteger(account.creditsRemaining) && Number.isInteger(account.creditsTotal)
+    ? `按已生成作品时长估算剩余 ${formatNumber(account.creditsRemaining)} / ${formatNumber(account.creditsTotal)} 额度`
+    : "剩余额度暂无法估算";
   const capability = doubao
     ? `<div class="account-capability"><span>今日已生成视频 · 北京时间</span><strong>${escapeHtml(doubaoCount)}</strong></div>
-      <p class="account-note">每日总额度和剩余次数${Number.isInteger(account.creditsTotal) && Number.isInteger(account.creditsRemaining)
-        ? `：${formatNumber(account.creditsRemaining)} / ${formatNumber(account.creditsTotal)}`
-        : "：网页未显示，暂不估算"}。生成任务尚未接入。</p>`
+      <p class="account-note">免费版每日 10 额度，0 点重置；5 秒视频用 1 额度，10 秒视频用 2 额度。${escapeHtml(doubaoQuota)}。生成任务尚未接入。</p>`
     : `<div class="credit-line"><div><span>可用积分</span><strong>${total ? `${formatNumber(remaining)} / ${formatNumber(total)}` : "待读取"}</strong></div><span>${percent}%</span></div>
       <progress class="progress" value="${remaining}" max="${total || 1}" aria-label="积分剩余 ${percent}%">${percent}%</progress>`;
   const accountDetails = doubao
     ? `<div class="account-meta"><span>档案 · ${escapeHtml(account.workerId)}</span><span>验收 · ${escapeHtml(formatTime(account.lastVerifiedAt))}</span>
       <span>创作记录 · ${account.creditPageReady ? "已读取" : "待读取"}</span><span>视频入口 · ${account.createPageReady ? "已读取" : "待读取"}</span>
       <span>次日重置 · ${escapeHtml(formatBeijingTime(account.creditsResetAt))}</span>
-      <span>参考图上限 · ${account.referenceImageLimit == null ? "网页未显示" : `${formatNumber(account.referenceImageLimit)} 张`}</span></div>
+      <span>Seedance 2.0 全模态参考 · 最多 9 张（模型规格）</span>
+      <span>当前页面参考图上限 · ${account.referenceImageLimit == null ? "网页未显示" : `${formatNumber(account.referenceImageLimit)} 张`}</span></div>
       <div class="tag-row">${models}</div>`
     : `<div class="account-meta"><span>档案 · ${escapeHtml(account.workerId)}</span><span>验收 · ${escapeHtml(formatTime(account.lastVerifiedAt))}</span><span>刷新 · ${escapeHtml(account.creditsResetAt || "待读取")}</span></div><div class="tag-row">${models}</div>`;
   const lastError = account.lastErrorCode

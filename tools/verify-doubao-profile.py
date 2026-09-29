@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
@@ -23,6 +24,7 @@ VIDEO_MODELS = (
     "Seedance 2.0 Mini",
 )
 BEIJING_TIME = timezone(timedelta(hours=8))
+DAILY_FREE_VIDEO_CREDITS = 10
 
 
 def beijing_day() -> tuple[str, str]:
@@ -76,17 +78,26 @@ def read_reference_image_limit(page) -> int | None:
     return int(match.group(1)) if match else None
 
 
-def count_today_videos(page, today: str) -> int | None:
-    """Count video cards in today's group of the user's creations."""
+def quota_cost_for_duration(duration: float) -> int | None:
+    """Map a completed 5s or 10s video to the current free-account rule."""
+    if abs(duration - 5) <= 1:
+        return 1
+    if abs(duration - 10) <= 1:
+        return 2
+    return None
+
+
+def read_today_videos(page, today: str) -> tuple[int | None, int | None]:
+    """Count today's video cards and estimate credits from preview durations."""
     date_label = today.replace("-", "/")
     groups = page.locator('[class*="combine-file-wrapper-"]')
     if groups.count() == 0:
         empty_text = page.locator("body").inner_text(timeout=5_000)
-        return 0 if any(marker in empty_text for marker in ("暂无创作", "还没有创作")) else None
+        return (0, 0) if any(marker in empty_text for marker in ("暂无创作", "还没有创作")) else (None, None)
 
     first_date = groups.first.locator('[class*="combine-file-time-"]').inner_text(timeout=3_000).strip()
     if first_date != date_label:
-        return 0 if re.fullmatch(r"\d{4}/\d{2}/\d{2}", first_date) and first_date < date_label else None
+        return (0, 0) if re.fullmatch(r"\d{4}/\d{2}/\d{2}", first_date) and first_date < date_label else (None, None)
 
     # The list may load more cards while scrolling. Stop only when another day
     # appears or the list remains stable at its bottom.
@@ -99,7 +110,7 @@ def count_today_videos(page, today: str) -> int | None:
             break
         scroll = page.locator('[class*="list-container-"]').first
         if scroll.count() == 0:
-            return None
+            return None, None
         scroll.evaluate("el => { el.scrollTop = el.scrollHeight; }")
         page.wait_for_timeout(350)
         stable_rounds = stable_rounds + 1 if current_count == previous_count else 0
@@ -109,13 +120,42 @@ def count_today_videos(page, today: str) -> int | None:
         ):
             break
     else:
-        return None
+        return None, None
 
     cards = groups.first.locator('[class*="combine-file-list-wrapper-"] > *')
-    return sum(
-        1 for index in range(cards.count())
+    video_indexes = [
+        index for index in range(cards.count())
         if cards.nth(index).locator('[class*="playBadge-"]').count() > 0
-    )
+    ]
+    video_count = len(video_indexes)
+    if video_count > DAILY_FREE_VIDEO_CREDITS:
+        return video_count, None
+
+    used_credits = 0
+    for index in video_indexes:
+        try:
+            cards.nth(index).click(timeout=5_000)
+            video = page.locator('[class*="preview-video-overlay-"] video').first
+            video.wait_for(state="attached", timeout=5_000)
+            page.wait_for_function(
+                "() => { const video = document.querySelector('[class*=\"preview-video-overlay-\"] video'); return video && Number.isFinite(video.duration) && video.duration > 0; }",
+                timeout=5_000,
+            )
+            duration = video.evaluate("element => { element.pause(); return element.duration; }")
+            cost = quota_cost_for_duration(duration)
+            if cost is None:
+                return video_count, None
+            used_credits += cost
+        except PlaywrightError:
+            return video_count, None
+        finally:
+            close = page.locator(".semi-image-preview-header-close").first
+            if close.count() > 0:
+                try:
+                    close.click(timeout=3_000)
+                except PlaywrightError:
+                    pass
+    return video_count, used_credits if used_credits <= DAILY_FREE_VIDEO_CREDITS else None
 
 
 def main() -> int:
@@ -137,6 +177,7 @@ def main() -> int:
         "createPageReady": False,
         "remainingCredits": None,
         "totalCredits": None,
+        "creditsEstimated": False,
         "nextRefresh": next_reset,
         "videosCreatedToday": None,
         "videoCountDate": today,
@@ -223,7 +264,12 @@ def main() -> int:
                 summary["creditPageReady"] = "tab=myCreation" in page.url
                 if summary["creditPageReady"]:
                     page.wait_for_timeout(700)
-                    summary["videosCreatedToday"] = count_today_videos(page, today)
+                    summary["totalCredits"] = DAILY_FREE_VIDEO_CREDITS
+                    count, used_credits = read_today_videos(page, today)
+                    summary["videosCreatedToday"] = count
+                    if used_credits is not None:
+                        summary["remainingCredits"] = DAILY_FREE_VIDEO_CREDITS - used_credits
+                        summary["creditsEstimated"] = True
 
             summary["ok"] = bool(
                 summary["loggedIn"]

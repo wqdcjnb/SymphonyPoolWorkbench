@@ -82,12 +82,15 @@ test("旧版账号数据库升级后保留账号并加入豆包视频字段", ()
     assert.equal(store.getAccount("old-doubao").label, "旧豆包账号");
     store.saveVerification("old-doubao", {
       ok: true, loggedIn: true, creditPageReady: true, createPageReady: true,
-      remainingCredits: null, totalCredits: null, nextRefresh: "2026-09-30T00:00:00+08:00",
+      remainingCredits: 8, totalCredits: 10, creditsEstimated: true,
+      nextRefresh: "2026-09-30T00:00:00+08:00",
       videosCreatedToday: 3, videoCountDate: "2026-09-29",
       referenceImageLimit: null, modelsObserved: ["Seedance 2.0 Fast"],
     });
     const account = store.getAccount("old-doubao");
     assert.equal(account.videosCreatedToday, 3);
+    assert.equal(account.creditsRemaining, 8);
+    assert.equal(account.creditsEstimated, true);
     assert.equal(account.creditPageReady, true);
     assert.equal(account.createPageReady, true);
     assert.deepEqual(account.models, ["Seedance 2.0 Fast"]);

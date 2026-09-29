@@ -39,6 +39,7 @@ function asAccount(row) {
     ...row,
     creditPageReady: Boolean(row.creditPageReady),
     createPageReady: Boolean(row.createPageReady),
+    creditsEstimated: Boolean(row.creditsEstimated),
     models: parseJson(row.modelsJson, []),
     modelsJson: undefined,
   };
@@ -72,6 +73,7 @@ export function createStore(databasePath) {
       health_score INTEGER NOT NULL DEFAULT 0 CHECK(health_score BETWEEN 0 AND 100),
       credits_remaining INTEGER,
       credits_total INTEGER,
+      credits_estimated INTEGER NOT NULL DEFAULT 0,
       credits_reset_at TEXT,
       videos_created_today INTEGER,
       video_count_date TEXT,
@@ -127,6 +129,7 @@ export function createStore(databasePath) {
     ["video_count_date", "TEXT"],
     ["credit_page_ready", "INTEGER NOT NULL DEFAULT 0"],
     ["create_page_ready", "INTEGER NOT NULL DEFAULT 0"],
+    ["credits_estimated", "INTEGER NOT NULL DEFAULT 0"],
   ]) {
     if (!accountColumns.has(column)) db.exec(`ALTER TABLE accounts ADD COLUMN ${column} ${definition}`);
   }
@@ -175,7 +178,8 @@ export function createStore(databasePath) {
         return asAccount(db.prepare(`SELECT id, label, login_type AS loginType, service,
           worker_id AS workerId, profile_path AS profilePath, status,
           health_score AS healthScore, credits_remaining AS creditsRemaining,
-          credits_total AS creditsTotal, credits_reset_at AS creditsResetAt,
+          credits_total AS creditsTotal, credits_estimated AS creditsEstimated,
+          credits_reset_at AS creditsResetAt,
           videos_created_today AS videosCreatedToday, video_count_date AS videoCountDate,
           credit_page_ready AS creditPageReady, create_page_ready AS createPageReady,
           reference_image_limit AS referenceImageLimit, models_json AS modelsJson,
@@ -188,7 +192,8 @@ export function createStore(databasePath) {
       return asAccount(db.prepare(`SELECT id, label, login_type AS loginType, service,
         worker_id AS workerId, profile_path AS profilePath, status,
         health_score AS healthScore, credits_remaining AS creditsRemaining,
-        credits_total AS creditsTotal, credits_reset_at AS creditsResetAt,
+        credits_total AS creditsTotal, credits_estimated AS creditsEstimated,
+        credits_reset_at AS creditsResetAt,
         videos_created_today AS videosCreatedToday, video_count_date AS videoCountDate,
         credit_page_ready AS creditPageReady, create_page_ready AS createPageReady,
         reference_image_limit AS referenceImageLimit, models_json AS modelsJson,
@@ -200,7 +205,8 @@ export function createStore(databasePath) {
       return db.prepare(`SELECT id, label, login_type AS loginType, service,
         worker_id AS workerId, profile_path AS profilePath, status,
         health_score AS healthScore, credits_remaining AS creditsRemaining,
-        credits_total AS creditsTotal, credits_reset_at AS creditsResetAt,
+        credits_total AS creditsTotal, credits_estimated AS creditsEstimated,
+        credits_reset_at AS creditsResetAt,
         videos_created_today AS videosCreatedToday, video_count_date AS videoCountDate,
         credit_page_ready AS creditPageReady, create_page_ready AS createPageReady,
         reference_image_limit AS referenceImageLimit, models_json AS modelsJson,
@@ -225,12 +231,13 @@ export function createStore(databasePath) {
           : new Set(["LOGIN_REQUIRED", "PROFILE_NOT_FOUND"]).has(result.error) ? "auth_required" : "error";
       return transaction(() => {
         const updated = db.prepare(`UPDATE accounts SET status=?, health_score=?,
-          credits_remaining=?, credits_total=?, credits_reset_at=?,
+          credits_remaining=?, credits_total=?, credits_estimated=?, credits_reset_at=?,
           videos_created_today=?, video_count_date=?, credit_page_ready=?, create_page_ready=?,
           reference_image_limit=?,
           models_json=?, last_verified_at=?, last_error_code=?, updated_at=? WHERE id=?`)
           .run(status, result.ok ? 100 : 25, result.remainingCredits, result.totalCredits,
-            result.nextRefresh, result.videosCreatedToday ?? null, result.videoCountDate ?? null,
+            result.creditsEstimated ? 1 : 0, result.nextRefresh,
+            result.videosCreatedToday ?? null, result.videoCountDate ?? null,
             result.creditPageReady ? 1 : 0, result.createPageReady ? 1 : 0,
             result.referenceImageLimit, JSON.stringify(result.modelsObserved || []),
             timestamp, result.error || null, timestamp, id);
@@ -244,6 +251,7 @@ export function createStore(databasePath) {
             stage: result.stage || null,
             remainingCredits: result.remainingCredits ?? null,
             totalCredits: result.totalCredits ?? null,
+            creditsEstimated: Boolean(result.creditsEstimated),
             videosCreatedToday: result.videosCreatedToday ?? null,
             videoCountDate: result.videoCountDate ?? null,
             error: result.error || null,

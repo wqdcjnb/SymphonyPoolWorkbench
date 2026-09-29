@@ -83,6 +83,7 @@ test("Doubao accounts use their verifier and cannot receive Symphony drafts", as
     ok:true, loggedIn:true, creditPageReady:true, createPageReady:true,
     videosCreatedToday:2, videoCountDate:"2026-09-29",
     nextRefresh:"2026-09-30T00:00:00+08:00", referenceImageLimit:null,
+    totalCredits:10, remainingCredits:7, creditsEstimated:true,
     modelsObserved:["Seedance 2.0 Fast","Seedance 2.0 Mini","Unknown model"], stage:"completed"
   }));`);
   fs.writeFileSync(tikTokVerifierPath, 'throw new Error("wrong verifier");');
@@ -122,7 +123,9 @@ test("Doubao accounts use their verifier and cannot receive Symphony drafts", as
     const verified = await post(port, `/api/accounts/${input.accountId}/verify`, {});
     assert.equal(verified.status, 200);
     assert.equal(verified.body.account.status, "ready");
-    assert.equal(verified.body.account.creditsRemaining, null);
+    assert.equal(verified.body.account.creditsRemaining, 7);
+    assert.equal(verified.body.account.creditsTotal, 10);
+    assert.equal(verified.body.account.creditsEstimated, true);
     assert.equal(verified.body.account.videosCreatedToday, 2);
     assert.equal(verified.body.account.videoCountDate, "2026-09-29");
     assert.equal(verified.body.account.creditsResetAt, "2026-09-30T00:00:00+08:00");

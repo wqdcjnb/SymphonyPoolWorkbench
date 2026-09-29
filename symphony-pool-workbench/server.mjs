@@ -107,6 +107,7 @@ function parseVerifierOutput(stdout, loginType) {
     createPageReady: Boolean(parsed.createPageReady),
     remainingCredits: Number.isInteger(parsed.remainingCredits) ? parsed.remainingCredits : null,
     totalCredits: Number.isInteger(parsed.totalCredits) ? parsed.totalCredits : null,
+    creditsEstimated: loginType === "doubao" && parsed.creditsEstimated === true,
     nextRefresh: typeof parsed.nextRefresh === "string" ? parsed.nextRefresh : null,
     videosCreatedToday: Number.isInteger(parsed.videosCreatedToday) && parsed.videosCreatedToday >= 0
       ? parsed.videosCreatedToday : null,
