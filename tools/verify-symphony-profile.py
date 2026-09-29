@@ -2,6 +2,7 @@ import argparse
 import json
 import re
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
@@ -16,7 +17,11 @@ KNOWN_MODELS = (
     "Dreamina Seedance 2.0 Fast",
     "Video 1.5 Pro",
 )
-CREDIT_MARKERS = ("本周剩余 Symphony 积分", "Symphony credits remaining this week")
+CREDIT_MARKERS = (
+    "本周剩余 Symphony 积分",
+    "Symphony credits remaining this week",
+    "remaining Symphony credits",
+)
 CREATE_MARKERS = ("上传最多 4 张图片", "Upload up to 4 images")
 
 
@@ -46,17 +51,15 @@ def read_body(page, expected_markers: tuple[str, ...]) -> str:
 def parse_credit_summary(body_text: str) -> dict:
     remaining = None
     total = None
-    credit_match = re.search(
+    credit_match = None
+    for pattern in (
         r"本周剩余\s*Symphony\s*积分.*?([\d,]+)\s*/\s*([\d,]+)",
-        body_text,
-        re.IGNORECASE,
-    )
-    if not credit_match:
-        credit_match = re.search(
-            r"Symphony\s+credits?\s+remaining\s+this\s+week.*?([\d,]+)\s*/\s*([\d,]+)",
-            body_text,
-            re.IGNORECASE,
-        )
+        r"Symphony\s+credits?\s+remaining\s+this\s+week.*?([\d,]+)\s*/\s*([\d,]+)",
+        r"remaining\s+Symphony\s+credits?.*?([\d,]+)\s*/\s*([\d,]+)",
+    ):
+        credit_match = re.search(pattern, body_text, re.IGNORECASE)
+        if credit_match:
+            break
     if credit_match:
         remaining = int(credit_match.group(1).replace(",", ""))
         total = int(credit_match.group(2).replace(",", ""))
@@ -71,6 +74,22 @@ def parse_credit_summary(body_text: str) -> dict:
             if len(date_parts) >= 2
             else raw_reset_at
         )
+    else:
+        english_reset = re.search(
+            r"Next refresh date\s*[:：]\s*([A-Za-z]+)\s+(\d{1,2})",
+            body_text,
+            re.IGNORECASE,
+        )
+        if english_reset:
+            for pattern in ("%Y %b %d", "%Y %B %d"):
+                try:
+                    parsed_date = datetime.strptime(
+                        f"2000 {english_reset.group(1)} {english_reset.group(2)}", pattern
+                    )
+                    reset_at = f"{parsed_date.month:02d}-{parsed_date.day:02d}"
+                    break
+                except ValueError:
+                    continue
 
     return {
         "remainingCredits": remaining,
@@ -140,10 +159,7 @@ def main() -> int:
             page.goto(CREDIT_URL, wait_until="domcontentloaded", timeout=60_000)
             summary["stage"] = "reading_credit_page"
             credit_text = read_body(page, CREDIT_MARKERS)
-            credit_ready = (
-                "本周剩余 Symphony 积分" in credit_text
-                or "symphony credits remaining this week" in credit_text.lower()
-            )
+            credit_ready = any(marker.lower() in credit_text.lower() for marker in CREDIT_MARKERS)
             login_redirect = any(marker in page.url.lower() for marker in ("/login", "signin", "sign-in"))
             summary["creditPageReady"] = credit_ready
             summary["loggedIn"] = credit_ready and not login_redirect
