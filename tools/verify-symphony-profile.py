@@ -16,15 +16,30 @@ KNOWN_MODELS = (
     "Dreamina Seedance 2.0 Fast",
     "Video 1.5 Pro",
 )
+CREDIT_MARKERS = ("本周剩余 Symphony 积分", "Symphony credits remaining this week")
+CREATE_MARKERS = ("上传最多 4 张图片", "Upload up to 4 images")
 
 
 def compact_text(value: str) -> str:
     return re.sub(r"\s+", " ", value or "").strip()
 
 
-def read_body(page) -> str:
+def read_body(page, expected_markers: tuple[str, ...]) -> str:
     page.wait_for_load_state("domcontentloaded", timeout=60_000)
-    page.wait_for_timeout(3_000)
+    try:
+        page.wait_for_function(
+            """markers => {
+                const text = (document.body?.innerText || '').replace(/\\s+/g, ' ');
+                return markers.some(marker => text.toLowerCase().includes(marker.toLowerCase()))
+                    || /\\/(login|signin|sign-in)(\\/|$)/i.test(location.pathname);
+            }""",
+            arg=list(expected_markers),
+            timeout=30_000,
+        )
+    except PlaywrightTimeoutError:
+        # Return the current page so the caller can report a specific
+        # readiness error instead of treating an empty page as logged out.
+        pass
     return compact_text(page.locator("body").inner_text(timeout=30_000))
 
 
@@ -124,7 +139,7 @@ def main() -> int:
             summary["stage"] = "opening_credit_page"
             page.goto(CREDIT_URL, wait_until="domcontentloaded", timeout=60_000)
             summary["stage"] = "reading_credit_page"
-            credit_text = read_body(page)
+            credit_text = read_body(page, CREDIT_MARKERS)
             credit_ready = (
                 "本周剩余 Symphony 积分" in credit_text
                 or "symphony credits remaining this week" in credit_text.lower()
@@ -133,18 +148,22 @@ def main() -> int:
             summary["creditPageReady"] = credit_ready
             summary["loggedIn"] = credit_ready and not login_redirect
             summary.update(parse_credit_summary(credit_text))
+            if not credit_ready:
+                summary["error"] = "LOGIN_REQUIRED" if login_redirect else "TIKTOK_CREDIT_PAGE_NOT_READY"
 
             if summary["loggedIn"]:
                 summary["stage"] = "opening_create_page"
                 page.goto(CREATE_URL, wait_until="domcontentloaded", timeout=60_000)
                 summary["stage"] = "reading_create_page"
-                create_text = read_body(page)
+                create_text = read_body(page, CREATE_MARKERS)
                 summary["createPageReady"] = any(
                     marker in create_text
-                    for marker in ("上传最多 4 张图片", "Upload up to 4 images")
+                    for marker in CREATE_MARKERS
                 )
                 summary["referenceImageLimit"] = 4 if summary["createPageReady"] else None
                 summary["modelsObserved"] = [model for model in KNOWN_MODELS if model in create_text]
+                if not summary["createPageReady"]:
+                    summary["error"] = "TIKTOK_CREATE_PAGE_NOT_READY"
 
             summary["ok"] = bool(
                 summary["loggedIn"]
