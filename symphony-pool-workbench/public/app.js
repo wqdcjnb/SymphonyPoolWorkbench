@@ -64,7 +64,7 @@ function toast(message, isError = false) {
 
 function statusBadge(account) {
   const label = account.lastErrorCode === "PROFILE_IN_USE" ? "窗口未关闭"
-    : isDoubao(account) && account.status === "ready" ? "视频验收通过" : statusLabel[account.status] || account.status;
+    : statusLabel[account.status] || account.status;
   return `<span class="status status-${escapeHtml(account.status)}"><i></i>${escapeHtml(label)}</span>`;
 }
 
@@ -96,21 +96,29 @@ function accountCard(account, compact = false) {
   const balanceLabel = doubao ? "预计剩余额度" : "可用积分";
   const capability = `<div class="credit-line"><div><span>${balanceLabel}</span><strong>${balanceKnown ? `${formatNumber(remaining)} / ${formatNumber(total)}` : "待读取"}</strong></div><span>${balanceKnown ? `${percent}%` : "—"}</span></div>
       <progress class="progress" value="${balanceKnown ? remaining : 0}" max="${total || 1}" aria-label="${balanceLabel}${balanceKnown ? ` ${percent}%` : "待读取"}">${balanceKnown ? `${percent}%` : "待读取"}</progress>`;
-  const accountDetails = doubao
-    ? `<p class="account-note">每日 10 额度，5 秒视频用 1 额度，10 秒视频用 2 额度；余额按今日作品时长估算。生成任务尚未接入。</p>
-      <div class="account-meta"><span>今日已生成视频 · ${escapeHtml(doubaoCount)}</span><span>档案 · ${escapeHtml(account.workerId)}</span><span>验收 · ${escapeHtml(formatTime(account.lastVerifiedAt))}</span>
-      <span>创作记录 · ${account.creditPageReady ? "已读取" : "待读取"}</span><span>视频入口 · ${account.createPageReady ? "已读取" : "待读取"}</span>
-      <span>次日重置 · ${escapeHtml(formatBeijingTime(account.creditsResetAt))}</span>
-      <span>Seedance 2.0 全模态参考 · 最多 9 张（模型规格）</span>
-      <span>当前页面参考图上限 · ${account.referenceImageLimit == null ? "网页未显示" : `${formatNumber(account.referenceImageLimit)} 张`}</span></div>
-      <div class="tag-row">${models}</div>`
-    : `<div class="account-meta"><span>档案 · ${escapeHtml(account.workerId)}</span><span>验收 · ${escapeHtml(formatTime(account.lastVerifiedAt))}</span><span>刷新 · ${escapeHtml(account.creditsResetAt || "待读取")}</span></div><div class="tag-row">${models}</div>`;
+  const refresh = doubao ? formatBeijingTime(account.creditsResetAt) : account.creditsResetAt || "待读取";
+  const accountDetails = `<div class="account-meta"><span>档案 · ${escapeHtml(account.workerId)}</span><span>验收 · ${escapeHtml(formatTime(account.lastVerifiedAt))}</span><span>刷新 · ${escapeHtml(refresh)}</span></div>
+    <div class="tag-row">${models}</div>`;
+  const doubaoDetails = doubao ? `<details class="account-extra">
+    <summary>今日已生成视频 · ${escapeHtml(doubaoCount)}<span>豆包详情</span></summary>
+    <div class="account-extra-grid">
+      <div>每日额度 · 10，次日 00:00 重置</div>
+      <div>5 秒视频 · 1 额度；10 秒视频 · 2 额度</div>
+      <div>余额依据 · 今日已生成作品的时长估算</div>
+      <div>创作记录 · ${account.creditPageReady ? "已读取" : "待读取"}</div>
+      <div>视频入口 · ${account.createPageReady ? "已读取" : "待读取"}</div>
+      <div>Seedance 2.0 全模态参考 · 最多 9 张（模型规格）</div>
+      <div>当前页面参考图上限 · ${account.referenceImageLimit == null ? "网页未显示" : `${formatNumber(account.referenceImageLimit)} 张`}</div>
+      <div>生成任务 · 尚未接入</div>
+    </div>
+  </details>` : "";
   const lastError = account.lastErrorCode
     ? `<p class="account-error">${escapeHtml(readableError(account.lastErrorCode))}</p>` : "";
   return `<div class="account-card ${compact ? "compact-account" : ""}">
     <div class="account-top"><div><span class="account-code">${escapeHtml(account.id)}</span><h3>${escapeHtml(account.label)}</h3><span class="platform-label">${doubao ? "豆包网页版" : "TikTok Symphony"}</span></div>${statusBadge(account)}</div>
     ${capability}
     ${accountDetails}
+    ${doubaoDetails}
     ${lastError}
     <div class="account-actions">
       <button class="button ghost small" data-action="open" data-account="${escapeHtml(account.id)}">打开登录窗口</button>

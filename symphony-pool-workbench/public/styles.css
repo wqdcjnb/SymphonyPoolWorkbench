@@ -92,7 +92,11 @@ h1 { margin: 0; font-size: clamp(30px, 4vw, 48px); line-height: 1; letter-spacin
 .credit-line div span { display: block; color: var(--muted); font-size: 10px; }
 .credit-line strong { display: block; margin-top: 4px; font-size: 18px; }
 .credit-line > span { color: var(--mint); font-size: 12px; }
-.account-note { margin: 0 0 17px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.account-extra { margin: 0 0 15px; color: var(--muted); font-size: 10px; }
+.account-extra summary { display: flex; justify-content: space-between; gap: 12px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: rgba(255,255,255,.03); cursor: pointer; list-style: none; }
+.account-extra summary::-webkit-details-marker { display: none; }
+.account-extra summary span { color: var(--mint); }
+.account-extra-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px 16px; padding: 12px 2px 0; line-height: 1.5; }
 .account-error { margin: 14px 0 0; color: var(--rose); font-size: 11px; line-height: 1.5; }
 .progress { display: block; width: 100%; height: 5px; border: 0; border-radius: 99px; overflow: hidden; margin: 10px 0 16px; appearance: none; background: rgba(255,255,255,.06); color: var(--mint); }
 .progress::-webkit-progress-bar { border-radius: 99px; background: rgba(255,255,255,.06); }
@@ -150,5 +154,6 @@ dialog form { padding: 23px; display: grid; gap: 14px; }
 }
 @media (max-width: 500px) {
   .metric-grid, .field-row { grid-template-columns: 1fr; }
+  .account-extra-grid { grid-template-columns: 1fr; }
   .notice { align-items: flex-start; }
 }
