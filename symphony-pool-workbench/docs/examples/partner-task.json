@@ -1,0 +1,10 @@
+{
+  "client_task_id": "order_20260930_0001",
+  "model": "Seedance 2.0 Mini",
+  "duration": 5,
+  "ratio": "9:16",
+  "count": 4,
+  "prompt": "海边日落，镜头缓慢向前推进，保持主体外观一致",
+  "negative_prompt": "不要文字、水印、画面闪烁和肢体变形",
+  "callback_url": ""
+}

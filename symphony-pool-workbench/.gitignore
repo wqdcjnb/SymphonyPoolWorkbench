@@ -1,8 +1,5 @@
-data/*.sqlite
-data/*.sqlite-*
-data/*.pid
-logs/*.log
+data/
+logs/
 .venv/
-output/playwright/*.png
-!data/.gitkeep
-!logs/.gitkeep
+.runtime/
+output/

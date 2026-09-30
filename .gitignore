@@ -1,5 +1,8 @@
 /*_sandbox_data/
+/.migration-backups/
+/release/
 **/.env
 **/.env.*
+!**/.env.example
 **/__pycache__/
 **/*.pyc

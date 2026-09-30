@@ -7,6 +7,7 @@ from pathlib import Path
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
+from browser_runtime import browser_channels
 
 
 CREDIT_URL = "https://ads.tiktok.com/creative/creativestudio/settings/credit"
@@ -132,7 +133,7 @@ def main() -> int:
     with sync_playwright() as playwright:
         context = None
         last_launch_error = None
-        for channel in ("chrome", "msedge", None):
+        for channel in browser_channels():
             try:
                 launch_options = {
                     "user_data_dir": str(profile_path),

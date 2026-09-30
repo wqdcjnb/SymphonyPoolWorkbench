@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>{{title}} · Symphony 号池工作台</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body data-page="{{page}}">
+  <div class="ambient ambient-a"></div>
+  <div class="ambient ambient-b"></div>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">S</div>
+        <div><p>SYMPHONY</p><span>POOL CONTROL</span></div>
+      </div>
+      <nav aria-label="工作台导航">
+        <a class="nav-item" href="/accounts" data-route="accounts"><span>01</span>账号池</a>
+        <a class="nav-item" href="/jobs" data-route="jobs"><span>02</span>工作台</a>
+        <a class="nav-item" href="/events" data-route="events"><span>03</span>审计事件</a>
+        <a class="nav-item" href="/api-docs" data-route="api-docs"><span>04</span>API 文档</a>
+      </nav>
+      <div class="local-card">
+        <span class="pulse"></span>
+        <div><strong>仅本机访问</strong><small>127.0.0.1 · SQLite</small></div>
+      </div>
+    </aside>
+
+    <main>
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">CONTROL PLANE / MVP 01</p>
+          <h1>Symphony 号池工作台</h1>
+          <p class="subtitle">Symphony 与豆包账号的本地档案、视频生成任务和状态管理</p>
+        </div>
+        <div class="top-actions">
+          <button class="button ghost" id="refreshButton">刷新数据</button>
+          <button class="button primary" id="addAccountButton">新增账号</button>
+        </div>
+      </header>
+
+      {{sections}}
+    </main>
+  </div>
+
+  <dialog id="accountDialog">
+    <form id="accountForm" method="dialog">
+      <div class="dialog-heading"><div><span class="kicker">NEW PROFILE</span><h2>新增账号档案</h2></div><button class="icon-button" id="closeAccountDialogButton" type="button" aria-label="关闭">×</button></div>
+      <label>账号平台<select id="accountLoginType" name="loginType"><option value="tiktok">TikTok Symphony</option><option value="doubao">豆包网页版</option></select></label>
+      <label>电脑编号<input id="accountWorkerIdInput" name="workerId" value="xzkj-pc-01" required></label>
+      <label>账号编号<input id="accountIdInput" name="accountId" required pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,127}"></label>
+      <label>显示名称<input id="accountLabelInput" name="label" required maxlength="80"></label>
+      <p class="dialog-note" id="accountDialogNote">创建后打开独立 Symphony 窗口，由你手动登录。关闭窗口后点击只读验收；工作台不接收密码或 Cookie。</p>
+      <button class="button primary wide" type="submit">建立档案记录</button>
+    </form>
+  </dialog>
+
+  <dialog id="editAccountDialog">
+    <form id="editAccountForm" method="dialog">
+      <div class="dialog-heading"><div><span class="kicker">ACCOUNT PROFILE</span><h2>编辑账号</h2></div><button class="icon-button" id="closeEditAccountDialogButton" type="button" aria-label="关闭">×</button></div>
+      <label>账号编号<input id="editAccountIdInput" name="accountId" required pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,127}" maxlength="128"></label>
+      <label>显示名称<input id="editAccountLabelInput" name="label" required maxlength="80"></label>
+      <p class="dialog-note">修改编号前请关闭该账号的专用登录窗口。工作台会同步迁移浏览器档案和任务关联。</p>
+      <button class="button primary wide" type="submit">保存修改</button>
+    </form>
+  </dialog>
+
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script src="/js/app.js" type="module"></script>
+</body>
+</html>

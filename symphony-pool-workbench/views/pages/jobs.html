@@ -1,0 +1,40 @@
+      <section id="jobs" class="panel-section">
+        <div class="section-heading jobs-section-heading"><div><span class="kicker">VIDEO WORKBENCH</span><h2>工作台</h2></div><p>创建视频任务，查看排队、生成进度和结果。</p></div>
+        <div class="two-column jobs-layout">
+          <form id="jobForm" class="panel form-panel">
+            <div class="field-row">
+              <label>目标账号<select name="accountId" id="jobAccount" required></select></label>
+              <label>模型<select name="model" id="jobModel" required><option value="Seedance 2.0 Fast">Seedance 2.0 Fast</option><option value="Seedance 2.0 Mini">Seedance 2.0 Mini</option><option value="Video 1.5 Pro">Video 1.5 Pro</option></select></label>
+            </div>
+            <div class="field-row">
+              <label>时长<select name="durationSeconds" id="jobDuration" required><option value="5">5 秒</option><option value="10">10 秒</option><option value="12">12 秒</option></select></label>
+              <label>视频比例<select name="aspectRatio" id="jobAspectRatio" required><option value="9:16">9:16</option><option value="16:9">16:9</option></select></label>
+            </div>
+            <label>并发数<input name="concurrency" id="jobConcurrency" type="number" min="1" max="8" step="1" value="1" required></label>
+            <label>正向提示词<textarea name="positivePrompt" rows="6" maxlength="12000" placeholder="描述想生成的场景、动作和镜头；有参考图片时可说明如何使用图片内容" required></textarea></label>
+            <label>负面提示词<textarea name="negativePrompt" rows="3" maxlength="2000" placeholder="描述不希望出现的内容（可选）"></textarea></label>
+            <label id="jobReferencePicker" class="reference-picker"><span id="jobImagePickerTitle">参考图片（可选）</span>
+              <span class="reference-picker-control"><span class="reference-picker-button">选择文件</span><span id="jobFileSummary" class="reference-picker-summary" aria-live="polite">未选择图片，将按纯文字生成</span></span>
+              <input id="jobReferenceFile" class="reference-native-input" type="file" accept="image/png,image/jpeg,image/webp" multiple>
+            </label>
+            <div id="jobSelectedFiles" class="reference-files" aria-live="polite"></div>
+            <p class="field-note" id="jobDraftEditNotice" hidden></p>
+            <div class="form-actions"><button class="button primary" id="jobStartButton" type="submit">开始生成</button><button class="text-button" id="jobStopEditingButton" type="button" hidden>取消编辑</button></div>
+          </form>
+          <article class="panel">
+            <div class="panel-heading"><div><span class="kicker">LATEST JOBS</span><h2>任务列表</h2></div></div>
+            <div class="job-toolbar">
+              <label for="jobStatusFilter">状态筛选
+                <select id="jobStatusFilter"><option value="all">全部任务</option><option value="success">生成成功</option><option value="failed">生成失败</option><option value="active">正在生成</option></select>
+              </label>
+              <span id="jobRange" class="job-range" aria-live="polite"></span>
+            </div>
+            <div id="jobList" class="job-list"></div>
+            <nav class="job-pagination" aria-label="任务列表分页">
+              <button id="jobPrevPage" class="button ghost small" type="button">上一页</button>
+              <span id="jobPageInfo" aria-live="polite"></span>
+              <button id="jobNextPage" class="button ghost small" type="button">下一页</button>
+            </nav>
+          </article>
+        </div>
+      </section>

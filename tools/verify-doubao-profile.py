@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
+from browser_runtime import browser_channels
 
 
 DOUBAO_URL = "https://www.doubao.com/chat/"
@@ -24,7 +25,7 @@ VIDEO_MODELS = (
     "Seedance 2.0 Mini",
 )
 BEIJING_TIME = timezone(timedelta(hours=8))
-DAILY_FREE_VIDEO_CREDITS = 10
+ESTIMATED_DAILY_VIDEO_BUDGET = 10
 
 
 def beijing_day() -> tuple[str, str]:
@@ -78,8 +79,8 @@ def read_reference_image_limit(page) -> int | None:
     return int(match.group(1)) if match else None
 
 
-def quota_cost_for_duration(duration: float) -> int | None:
-    """Map a completed 5s or 10s video to the current free-account rule."""
+def estimated_weight_for_duration(duration: float) -> int | None:
+    """Return a rough ranking weight, not a platform-confirmed task cost."""
     if abs(duration - 5) <= 1:
         return 1
     if abs(duration - 10) <= 1:
@@ -128,10 +129,10 @@ def read_today_videos(page, today: str) -> tuple[int | None, int | None]:
         if cards.nth(index).locator('[class*="playBadge-"]').count() > 0
     ]
     video_count = len(video_indexes)
-    if video_count > DAILY_FREE_VIDEO_CREDITS:
+    if video_count > ESTIMATED_DAILY_VIDEO_BUDGET:
         return video_count, None
 
-    used_credits = 0
+    estimated_used = 0
     for index in video_indexes:
         try:
             cards.nth(index).click(timeout=5_000)
@@ -142,10 +143,10 @@ def read_today_videos(page, today: str) -> tuple[int | None, int | None]:
                 timeout=5_000,
             )
             duration = video.evaluate("element => { element.pause(); return element.duration; }")
-            cost = quota_cost_for_duration(duration)
-            if cost is None:
+            weight = estimated_weight_for_duration(duration)
+            if weight is None:
                 return video_count, None
-            used_credits += cost
+            estimated_used += weight
         except PlaywrightError:
             return video_count, None
         finally:
@@ -155,7 +156,7 @@ def read_today_videos(page, today: str) -> tuple[int | None, int | None]:
                     close.click(timeout=3_000)
                 except PlaywrightError:
                     pass
-    return video_count, used_credits if used_credits <= DAILY_FREE_VIDEO_CREDITS else None
+    return video_count, estimated_used if estimated_used <= ESTIMATED_DAILY_VIDEO_BUDGET else None
 
 
 def main() -> int:
@@ -188,7 +189,7 @@ def main() -> int:
 
     with sync_playwright() as playwright:
         context = None
-        for channel in ("chrome", "msedge", None):
+        for channel in browser_channels():
             try:
                 options = {
                     "user_data_dir": str(profile_path),
@@ -264,11 +265,11 @@ def main() -> int:
                 summary["creditPageReady"] = "tab=myCreation" in page.url
                 if summary["creditPageReady"]:
                     page.wait_for_timeout(700)
-                    summary["totalCredits"] = DAILY_FREE_VIDEO_CREDITS
-                    count, used_credits = read_today_videos(page, today)
+                    summary["totalCredits"] = ESTIMATED_DAILY_VIDEO_BUDGET
+                    count, estimated_used = read_today_videos(page, today)
                     summary["videosCreatedToday"] = count
-                    if used_credits is not None:
-                        summary["remainingCredits"] = DAILY_FREE_VIDEO_CREDITS - used_credits
+                    if estimated_used is not None:
+                        summary["remainingCredits"] = ESTIMATED_DAILY_VIDEO_BUDGET - estimated_used
                         summary["creditsEstimated"] = True
 
             summary["ok"] = bool(
