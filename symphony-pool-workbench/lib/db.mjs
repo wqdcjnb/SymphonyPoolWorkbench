@@ -280,6 +280,29 @@ export function createStore(databasePath) {
       });
     },
 
+    hasAccountHistory() {
+      return Boolean(db.prepare("SELECT 1 FROM events WHERE event_type IN ('account.created','account.deleted') LIMIT 1").get());
+    },
+
+    hasPendingJobForAccount(id) {
+      return Boolean(db.prepare(`SELECT 1 FROM jobs
+        WHERE (account_id=? OR requested_account_id=?)
+          AND status IN ('draft','queued','leased','submitting','submitted','generating','collecting','reconciling')
+        LIMIT 1`).get(id, id));
+    },
+
+    deleteAccount(id) {
+      return transaction(() => {
+        const account = this.getAccount(id);
+        if (!account) throw new Error("ACCOUNT_NOT_FOUND");
+        if (this.hasPendingJobForAccount(id)) throw new Error("ACCOUNT_HAS_PENDING_JOBS");
+        db.prepare("DELETE FROM accounts WHERE id=?").run(id);
+        insertEvent({ eventType: "account.deleted", message: "账号档案已删除",
+          details: { accountId: id, label: account.label } });
+        return account;
+      });
+    },
+
     getAccount(id) {
       return asAccount(db.prepare(`SELECT id, label, login_type AS loginType, service,
         worker_id AS workerId, profile_path AS profilePath, status,
@@ -478,6 +501,14 @@ export function createStore(databasePath) {
       });
     },
 
+    markAccountLoginRequired(id, errorCode = "LOGIN_REQUIRED") {
+      const updated = db.prepare("UPDATE accounts SET status='auth_required', last_error_code=?, updated_at=? WHERE id=?")
+        .run(errorCode, Date.now(), id);
+      if (!updated.changes) throw new Error("ACCOUNT_NOT_FOUND");
+      insertEvent({ accountId: id, eventType: "account.session_expired",
+        message: "平台要求重新登录，已暂停使用此账号", details: { errorCode } });
+    },
+
     markAccountQuotaExhausted(id) {
       return transaction(() => {
         const timestamp = Date.now();
@@ -503,6 +534,7 @@ export function createStore(databasePath) {
           throw new Error("JOB_ALREADY_FINISHED");
         }
         const now = Date.now();
+        const profileBusy = beforeSubmission && errorCode === "PROFILE_IN_USE";
         if (quotaExhausted) {
           const updated = db.prepare(`UPDATE accounts SET status='cooling', credits_remaining=0,
             video_count_date=?, quota_exhausted_date=?, last_error_code=?, updated_at=?
@@ -512,21 +544,24 @@ export function createStore(databasePath) {
           insertEvent({ accountId, eventType: "account.quota_exhausted",
             message: "平台确认该账号今日免费生成次数已用完",
             details: { errorCode } });
-        } else {
+        } else if (errorCode === "LOGIN_REQUIRED") {
+          this.markAccountLoginRequired(accountId);
+        } else if (!profileBusy) {
           db.prepare(`UPDATE accounts SET status='degraded', health_score=25,
             last_error_code=?, updated_at=? WHERE id=?`)
             .run(errorCode, now, accountId);
           insertEvent({ accountId, eventType: "account.dispatch_failed",
             message: "提交前执行失败，账号等待重新验收", details: { errorCode } });
         }
-        const canRetry = job.queuedAt != null && !job.requestedAccountId && !job.cancelRequested;
+        const canRetry = job.queuedAt != null && (!job.requestedAccountId || profileBusy) && !job.cancelRequested;
         if (canRetry) {
           db.prepare(`UPDATE jobs SET account_id=NULL, model=requested_model, status='queued',
-            remote_url=NULL, result_path=NULL, error_code=NULL, submitted_at=NULL,
+            remote_url=NULL, result_path=NULL, error_code=?, submitted_at=NULL,
             completed_at=NULL, updated_at=? WHERE id=?`)
-            .run(now, id);
-          insertEvent({ accountId, jobId: id, eventType: "job.failover_queued",
-            message: "已切换候选账号并重新排队", details: { errorCode, quotaExhausted } });
+            .run(profileBusy ? "ACCOUNT_BROWSER_BUSY" : null, now, id);
+          insertEvent({ accountId, jobId: id, eventType: profileBusy ? "job.waiting_for_browser" : "job.failover_queued",
+            message: profileBusy ? "账号浏览器暂被占用，释放后自动继续" : "已切换候选账号并重新排队",
+            details: { errorCode, quotaExhausted } });
         } else {
           const finalStatus = job.cancelRequested ? "cancelled" : "failed";
           db.prepare(`UPDATE jobs SET status=?, error_code=?, completed_at=?, updated_at=? WHERE id=?`)
@@ -594,8 +629,9 @@ export function createStore(databasePath) {
       });
     },
 
-    claimNextQueuedJob({ maxVerificationAgeMs = 24 * 60 * 60_000 } = {}) {
+    claimNextQueuedJob({ maxVerificationAgeMs = 24 * 60 * 60_000, unavailableAccountIds = [] } = {}) {
       return transaction(() => {
+        const unavailable = new Set(unavailableAccountIds);
         const queued = db.prepare(`${jobSelect} WHERE status='queued' AND cancel_requested=0
           ORDER BY priority DESC, COALESCE(queued_at,created_at) ASC, rowid ASC`).all().map(asJob);
         if (!queued.length) return null;
@@ -611,7 +647,7 @@ export function createStore(databasePath) {
             status: account.status === "ready" && (!verifiedAt
               || now - verifiedAt > maxVerificationAgeMs || verifiedAt < lastUsedAt)
               ? "degraded" : account.status,
-            busy: Boolean(occupancy.get(account.id)), lastUsedAt,
+            busy: Boolean(occupancy.get(account.id)) || unavailable.has(account.id), lastUsedAt,
           };
         });
         for (const job of queued) {
@@ -620,7 +656,14 @@ export function createStore(databasePath) {
             selected = resolveVideoTarget({ ...job, accountId: job.requestedAccountId,
               model: job.requestedModel }, accounts);
           } catch (error) {
-            const reason = String(error.message || "NO_ELIGIBLE_ACCOUNT").slice(0, 80);
+            let reason = String(error.message || "NO_ELIGIBLE_ACCOUNT").slice(0, 80);
+            if (unavailable.size && ["NO_ELIGIBLE_ACCOUNT", "ACCOUNT_ALREADY_RUNNING"].includes(reason)) {
+              try {
+                resolveVideoTarget({ ...job, accountId: job.requestedAccountId, model: job.requestedModel },
+                  accounts.map((account) => ({ ...account, busy: Boolean(occupancy.get(account.id)) })));
+                reason = "ACCOUNT_BROWSER_BUSY";
+              } catch { /* Another eligibility requirement also prevents dispatch. */ }
+            }
             if (job.errorCode !== reason) {
               db.prepare("UPDATE jobs SET error_code=? WHERE id=? AND status='queued'").run(reason, job.id);
             }

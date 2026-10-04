@@ -3,9 +3,11 @@ set -euo pipefail
 APP_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 export DISPLAY=:99
 export XAUTHORITY="$APP_ROOT/data/desktop.Xauthority"
+export WORKBENCH_DESKTOP_ROOT="$APP_ROOT/data/login-desktops"
+export PYTHONPATH="$APP_ROOT/../tools${PYTHONPATH:+:$PYTHONPATH}"
 export PATH="$APP_ROOT/.runtime/node/bin:$PATH"
 umask 077
-for required in "$APP_ROOT/data/vnc.pass" "$XAUTHORITY"; do
+for required in "$XAUTHORITY"; do
   if [[ ! -s "$required" ]]; then
     echo 'Desktop credentials missing. Follow docs/UBUNTU.md before starting.' >&2
     exit 1
@@ -41,10 +43,8 @@ done
 if [[ "$ready" != true ]]; then echo 'Xvfb startup timed out.' >&2; exit 1; fi
 openbox &
 children+=("$!")
-x11vnc -display "$DISPLAY" -auth "$XAUTHORITY" -localhost -rfbport 5901 \
-  -rfbauth "$APP_ROOT/data/vnc.pass" -forever -shared &
-children+=("$!")
-websockify --web=/usr/share/novnc 127.0.0.1:6080 127.0.0.1:5901 &
+# Xpra sessions are reachable only through a validated account bearer and SSH tunnel.
+"$APP_ROOT/.venv/bin/python" "$APP_ROOT/../tools/xpra_gateway.py" --root "$WORKBENCH_DESKTOP_ROOT" --port 6080 &
 children+=("$!")
 cd "$APP_ROOT"
 "$APP_ROOT/.runtime/node/bin/node" --disable-warning=ExperimentalWarning server.mjs &

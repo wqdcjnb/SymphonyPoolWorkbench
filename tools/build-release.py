@@ -14,7 +14,8 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 APP = "symphony-pool-workbench"
 FILES = (
-    "README.md", ".gitignore", ".gitattributes",
+    "README.md", ".gitignore", ".gitattributes", ".dockerignore",
+    f"{APP}/deploy/docker/Dockerfile", f"{APP}/deploy/docker/Caddyfile",
     *(f"{APP}/{name}" for name in (
         "README.md", "CHANGELOG.md", "PARTNER_API.md", "VIDEO_API.md",
         "NOCSNOW_API.md", "package.json", "requirements.txt", ".env.example",
@@ -23,17 +24,22 @@ FILES = (
     *(f"tools/{name}" for name in (
         "build-release.py", "open-symphony-profile.ps1", "run-image-to-video.py",
         "verify-doubao-profile.py", "verify-symphony-profile.py",
-        "test_verify_symphony_profile.py",
+        "test_verify_symphony_profile.py", "test_verification_launch.py",
         "browser_runtime.py", "open-browser-profile.py", "test_browser_runtime.py",
+        "desktop_routes.py", "login_desktop.py", "test_desktop_routes.py", "test_login_desktop.py",
+        "xpra_gateway.py", "test_xpra_gateway.py", "fixtures/xpra-input.html",
+        "test_generation_launch.py", "test_verification_launch.py",
+        "start-docker-test.ps1", "allow-docker-lan.ps1", "configure-xpra-client.ps1",
+        "win-xpra-launcher.cs", "test-xpra-client.ps1",
     )),
 )
 DIRECTORIES = tuple(f"{APP}/{name}" for name in (
     "lib", "public", "views", "tests", "scripts", "docs", "deploy",
 ))
-EXTENSIONS = {".mjs", ".js", ".css", ".html", ".svg", ".json", ".md", ".txt", ".sh", ".service", ".example"}
+EXTENSIONS = {".mjs", ".js", ".css", ".html", ".svg", ".json", ".md", ".txt", ".sh", ".service", ".example", ".yml", ".ps1"}
 BLOCKED_PARTS = {
     ".git", ".venv", ".env", ".migration-backups", "__pycache__",
-    "node_modules", "data", "logs", "output", "backups", "release", ".runtime",
+    "node_modules", "data", "logs", "output", "backups", "release", ".runtime", ".docker-local",
 }
 
 

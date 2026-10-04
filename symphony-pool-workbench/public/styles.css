@@ -49,6 +49,8 @@ h1 { margin: 0; font-size: clamp(30px, 4vw, 48px); line-height: 1; letter-spacin
 .button.primary { color: #05110d; background: var(--mint); }
 .button.ghost { color: var(--text); background: rgba(255,255,255,.04); border-color: var(--line); }
 .button.small { padding: 8px 11px; font-size: 11px; }
+.account-actions a.button { display: inline-flex; align-items: center; text-decoration: none; }
+.account-actions a.button[aria-disabled="true"] { opacity: .5; cursor: not-allowed; }
 .button.wide { width: 100%; }
 .text-button { padding: 0; border: 0; background: none; color: var(--mint); cursor: pointer; font-size: 12px; text-decoration: none; }
 .text-button.danger { color: var(--rose); }
@@ -93,14 +95,16 @@ h1 { margin: 0; font-size: clamp(30px, 4vw, 48px); line-height: 1; letter-spacin
 .account-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .account-card { border-radius: 17px; padding: 19px; }
 .account-top, .credit-line, .account-actions, .job-head, .job-meta, .event-title { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
-.account-top { align-items: flex-start; }
-.account-code { color: var(--muted); font-size: 10px; letter-spacing: .1em; }
+.account-top { display: block; }
+.account-top-row { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+.account-code { color: var(--muted); font-size: 10px; letter-spacing: .1em; min-width: 0; overflow-wrap: anywhere; padding-top: 8px; }
 .account-heading { min-width: 0; overflow-wrap: anywhere; }
 .account-top-actions { display: flex; align-items: center; gap: 8px; flex: none; }
 .account-edit-button { display: grid; place-items: center; flex: none; color: var(--muted); }
 .account-edit-button:hover, .account-edit-button:focus-visible { color: var(--mint); border-color: var(--mint); }
-.account-top h3 { margin: 5px 0 0; font-size: 17px; }
+.account-top h3 { margin: 9px 0 0; font-size: 17px; }
 .platform-label { display: inline-block; margin-top: 7px; color: var(--violet); font-size: 10px; }
+.account-heading .status { margin-left: 10px; }
 .status { display: inline-flex; align-items: center; gap: 7px; padding: 6px 9px; border-radius: 99px; border: 1px solid var(--line); color: var(--muted); background: rgba(255,255,255,.03); font-size: 10px; }
 .status i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .status-ready { color: var(--mint); background: rgba(112,240,183,.07); }
@@ -129,6 +133,11 @@ h1 { margin: 0; font-size: clamp(30px, 4vw, 48px); line-height: 1; letter-spacin
 .tag-row { display: flex; gap: 6px; flex-wrap: wrap; margin: 15px 0; }
 .tag { padding: 5px 8px; background: rgba(169,148,255,.08); color: #c7baff; border: 1px solid rgba(169,148,255,.14); border-radius: 8px; font-size: 9px; }
 .account-actions { justify-content: flex-start; flex-wrap: wrap; border-top: 1px solid var(--line); padding-top: 15px; }
+.account-delete-button { display: grid; place-items: center; flex: none; color: var(--muted); }
+.account-delete-button:hover, .account-delete-button:focus-visible { color: var(--rose); border-color: var(--rose); }
+.account-desktop-link { display: inline-block; margin-top: 8px; color: var(--mint); font-size: 12px; text-decoration: none; }
+.account-desktop-link[hidden] { display: none; }
+.account-desktop-link:hover, .account-desktop-link:focus-visible { text-decoration: underline; }
 .event-list { display: grid; }
 .event-item { display: grid; grid-template-columns: 9px 1fr; gap: 12px; padding: 13px 0; border-bottom: 1px solid var(--line); }
 .event-item:last-child { border-bottom: 0; }

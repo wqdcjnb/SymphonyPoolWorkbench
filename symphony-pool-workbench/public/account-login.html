@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>账号登录 · Symphony</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/js/account-login.js?v=1.3.0-xpra-handler6"></script>
+</head>
+<body>
+  <main>
+    <p class="kicker">ACCOUNT LOGIN</p>
+    <h1>用 Xpra 登录账号</h1>
+    <p id="loginAccount" class="subtitle"></p>
+    <p id="loginStatus" role="status">正在准备此账号的独立界面，请稍候…</p>
+    <section id="loginActions" hidden>
+      <div class="account-actions">
+        <a id="loginNative" class="button primary" href="#">直接打开 Xpra</a>
+        <a id="loginDownload" class="button ghost" href="#" download>下载连接文件</a>
+        <button id="loginFinish" class="button ghost" type="button">登录完成，结束窗口</button>
+      </div>
+      <p class="subtitle">首次使用请先安装 <a href="https://github.com/Xpra-org/xpra/wiki/Download#Microsoft-Windows" target="_blank" rel="noopener noreferrer">Xpra Windows 客户端</a>。每个账号打开自己的独立窗口。</p>
+      <p class="subtitle">仅断开 Xpra 连接会保留浏览器。完成登录后，请点击“登录完成，结束窗口”，再返回账号池验收。</p>
+    </section>
+    <button id="loginRetry" class="button primary" hidden>重新打开</button>
+    <a class="text-button" href="/accounts">返回账号池</a>
+  </main>
+</body>
+</html>

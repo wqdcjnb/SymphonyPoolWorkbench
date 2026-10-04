@@ -27,6 +27,20 @@ class BrowserRuntimeTests(unittest.TestCase):
             result = launcher["launch"](SimpleNamespace(profile="must-not-be-created", login_type="doubao"))
         self.assertEqual(result, {"ok": False, "error": "DISPLAY_NOT_CONFIGURED"})
 
+    def test_existing_login_is_recognized_only_for_its_own_live_browser(self):
+        launcher = run_path(str(Path(__file__).with_name("open-browser-profile.py")))
+        profile = Path.cwd() / "account-profile"
+        cmdline = os.fsencode("/opt/google/chrome/chrome") + b"\0" + os.fsencode(
+            f"--user-data-dir={profile}") + b"\0"
+        with patch("os.readlink", return_value="test-host-123"), \
+             patch("socket.gethostname", return_value="test-host"), \
+             patch.object(Path, "read_bytes", return_value=cmdline):
+            self.assertEqual(launcher["running_browser_pid"](profile), 123)
+        with patch("os.readlink", return_value="test-host-123"), \
+             patch("socket.gethostname", return_value="test-host"), \
+             patch.object(Path, "read_bytes", return_value=b"chrome\0--user-data-dir=/other\0"):
+            self.assertIsNone(launcher["running_browser_pid"](profile))
+
 
 if __name__ == "__main__":
     unittest.main()

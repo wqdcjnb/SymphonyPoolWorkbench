@@ -7,7 +7,7 @@ from pathlib import Path
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
-from browser_runtime import browser_channels
+from browser_runtime import browser_channels, profile_in_use_error
 
 
 CREDIT_URL = "https://ads.tiktok.com/creative/creativestudio/settings/credit"
@@ -149,8 +149,11 @@ def main() -> int:
                 break
             except Exception as error:  # Keep output sanitized; never print profile contents.
                 last_launch_error = type(error).__name__
+                if profile_in_use_error(error, profile_path):
+                    summary["error"] = "PROFILE_IN_USE"
+                    break
         if context is None:
-            summary["error"] = f"BROWSER_LAUNCH_FAILED:{last_launch_error or 'UNKNOWN'}"
+            summary.setdefault("error", f"BROWSER_LAUNCH_FAILED:{last_launch_error or 'UNKNOWN'}")
             print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
             return 3
 

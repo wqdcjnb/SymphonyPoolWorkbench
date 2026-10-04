@@ -27,7 +27,14 @@ umask 077
 sudo -v
 sudo apt-get update
 sudo apt-get install -y --no-install-recommends curl ca-certificates xz-utils python3 python3-venv \
-  xvfb xauth x11-utils x11vnc novnc websockify openbox dbus-user-session fonts-noto-cjk
+  xvfb xauth x11-utils openbox xdotool dbus-user-session fonts-noto-cjk
+XPRA_VERSION=6.5.4-r0-1
+curl --fail --location --retry 3 https://xpra.org/xpra.asc | sudo tee /usr/share/keyrings/xpra.asc >/dev/null
+printf 'Types: deb\nURIs: https://xpra.org/\nSuites: noble\nComponents: main\nSigned-By: /usr/share/keyrings/xpra.asc\n' | sudo tee /etc/apt/sources.list.d/xpra.sources >/dev/null
+sudo apt-get update
+sudo apt-get install -y --no-install-recommends \
+  "xpra-server=$XPRA_VERSION" "xpra-x11=$XPRA_VERSION" "xpra-codecs=$XPRA_VERSION" \
+  python3-gi-cairo python3-dbus dbus-x11 x11-xkb-utils libx264-164
 sudo install -d -m 1777 -o root -g root /tmp/.X11-unix
 
 RUNTIME="$APP_ROOT/.runtime"
@@ -84,6 +91,6 @@ if [[ ! -s "$APP_ROOT/data/desktop.Xauthority" ]]; then
   xauth -f "$APP_ROOT/data/desktop.Xauthority" add :99 . "$(mcookie)"
 fi
 chmod 600 "$APP_ROOT/data/desktop.Xauthority"
-printf '\nInstallation prepared. Next, configure the remote desktop password locally:\n  x11vnc -storepasswd "%s/data/vnc.pass"\n' "$APP_ROOT"
+printf '\nInstallation prepared. Install the Xpra native client on your Windows computer.\n'
 printf '\nThen start the service:\n  systemctl --user daemon-reload\n  systemctl --user enable --now symphony-workbench.service\n  sudo loginctl enable-linger "%s"\n' "$(id -un)"
 echo 'See docs/UBUNTU.md for SSH access, API configuration, and acceptance checks.'

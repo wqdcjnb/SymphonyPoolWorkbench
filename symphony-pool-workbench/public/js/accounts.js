@@ -6,6 +6,10 @@ function statusBadge(account) {
     : statusLabel[account.status] || account.status;
   return `<span class="status status-${escapeHtml(account.status)}"><i></i>${escapeHtml(label)}</span>`;
 }
+function hasDesktop() {
+  const port = Number(state.desktopPort);
+  return Number.isInteger(port) && port >= 1 && port <= 65535;
+}
 function accountCard(account) {
   const doubao = isDoubao(account);
   const runningJob = state.jobs.some((job) => job.accountId === account.id
@@ -43,21 +47,32 @@ function accountCard(account) {
   </details>` : "";
   const lastError = account.lastErrorCode
     ? `<p class="account-error">${escapeHtml(readableError(account.lastErrorCode))}</p>` : "";
+  const desktop = hasDesktop();
+  const openControl = desktop
+    ? `<a class="button ghost small" href="/accounts/${encodeURIComponent(account.id)}/login" target="_blank" rel="noopener noreferrer" data-action="open" data-account="${escapeHtml(account.id)}" ${runningJob ? 'aria-disabled="true" tabindex="-1"' : ""}>打开登录窗口</a>`
+    : `<button class="button ghost small" data-action="open" data-account="${escapeHtml(account.id)}" ${runningJob ? "disabled" : ""}>打开登录窗口</button>`;
   return `<div class="account-card">
-    <div class="account-top"><div class="account-heading"><span class="account-code">${escapeHtml(account.id)}</span><h3>${escapeHtml(account.label)}</h3><span class="platform-label">${doubao ? "豆包网页版" : "TikTok Symphony"}</span></div>
-      <div class="account-top-actions">${statusBadge(account)}<button class="icon-button account-edit-button" type="button" data-action="edit-account" data-account="${escapeHtml(account.id)}" aria-label="编辑 ${escapeHtml(account.label)} 的编号和名称" title="编辑账号编号和名称"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L9 17l-4 1 1-4Z"/></svg></button></div></div>
+    <div class="account-top"><div class="account-top-row"><span class="account-code">${escapeHtml(account.id)}</span>
+      <div class="account-top-actions"><button class="icon-button account-edit-button" type="button" data-action="edit-account" data-account="${escapeHtml(account.id)}" aria-label="编辑 ${escapeHtml(account.label)} 的编号和名称" title="编辑账号编号和名称"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L9 17l-4 1 1-4Z"/></svg></button><button class="icon-button account-delete-button" type="button" data-action="delete-account" data-account="${escapeHtml(account.id)}" aria-label="删除 ${escapeHtml(account.label)}" title="删除账号"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg></button></div></div>
+      <div class="account-heading"><h3>${escapeHtml(account.label)}</h3><span class="platform-label">${doubao ? "豆包网页版" : "TikTok Symphony"}</span>${statusBadge(account)}</div></div>
     ${capability}
     ${accountDetails}
     ${doubaoDetails}
     ${lastError}
     <div class="account-actions">
-      <button class="button ghost small" data-action="open" data-account="${escapeHtml(account.id)}" ${runningJob ? "disabled" : ""}>打开登录窗口</button>
+      ${openControl}
       <button class="button primary small" data-action="verify" data-account="${escapeHtml(account.id)}" ${account.status === "checking" || runningJob ? "disabled" : ""}>只读验收</button>
     </div>
   </div>`;
 }
 
 export function renderAccounts() {
+  const loginNote = $("#accountLoginNote");
+  if (loginNote) {
+    loginNote.textContent = hasDesktop()
+      ? "使用 Xpra 打开账号的独立 Chrome 窗口；登录后点击“登录完成，结束窗口”，再进行只读验收。"
+      : "每个账号使用独立浏览器档案；登录完成后关闭窗口，再进行只读验收。";
+  }
   $("#accountGrid").innerHTML = state.accounts.length
     ? state.accounts.map((account) => accountCard(account)).join("")
     : '<div class="empty">还没有账号档案。</div>';
@@ -68,7 +83,7 @@ async function accountAction(action, accountId, button, refresh) {
   const original = button.textContent;
   button.textContent = action === "verify" ? "验收中…" : "正在打开…";
   try {
-    await api(`/api/accounts/${encodeURIComponent(accountId)}/${action}`, { method: "POST", body: "{}" });
+    const result = await api(`/api/accounts/${encodeURIComponent(accountId)}/${action}`, { method: "POST", body: "{}" });
     toast(action === "verify" ? "只读验收通过" : "专用登录窗口已打开");
     await refresh();
   } catch (error) {
@@ -100,7 +115,15 @@ export function bindAccountControls(refresh) {
   document.addEventListener("click", async (event) => {
     const action = event.target.closest("[data-action]");
     if (action && (action.dataset.action === "open" || action.dataset.action === "verify")) {
+      if (action.getAttribute("aria-disabled") === "true" || action.dataset.busy === "true") {
+        event.preventDefault();
+        return;
+      }
+      // The account-specific tab launches once and waits for its own desktop connection.
+      if (action.tagName === "A" && action.dataset.action === "open") return;
+      action.dataset.busy = "true";
       await accountAction(action.dataset.action, action.dataset.account, action, refresh);
+      delete action.dataset.busy;
     }
     if (action?.dataset.action === "edit-account") {
       const account = state.accounts.find((item) => item.id === action.dataset.account);
@@ -111,6 +134,23 @@ export function bindAccountControls(refresh) {
       $("#editAccountLabelInput").value = account.label;
       dialog.showModal();
       $("#editAccountIdInput").focus();
+    }
+    if (action?.dataset.action === "delete-account") {
+      const account = state.accounts.find((item) => item.id === action.dataset.account);
+      if (!account || !window.confirm(`确定删除「${account.label}」？账号记录和浏览器登录档案将永久删除，历史任务与已生成视频会保留。请先关闭该账号的登录窗口。`)) return;
+      action.disabled = true;
+      let deleted;
+      try {
+        deleted = await api(`/api/accounts/${encodeURIComponent(account.id)}`, { method: "DELETE" });
+      } catch (error) {
+        action.disabled = false;
+        toast(`删除失败：${readableError(error.message)}`, true);
+        return;
+      }
+      state.accounts = state.accounts.filter((item) => item.id !== account.id);
+      renderAccounts();
+      toast(deleted.profileCleanupPending ? "账号已删除，登录档案清理未完成，请检查服务器目录" : "账号已删除");
+      refresh().catch((error) => toast(`账号已删除，列表同步失败：${readableError(error.message)}`, true));
     }
   });
   $("#addAccountButton").addEventListener("click", async (event) => {
@@ -158,15 +198,24 @@ export function bindAccountControls(refresh) {
 
   $("#accountForm").addEventListener("submit", async (event) => {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
+    const accountForm = event.currentTarget;
+    const submitButton = event.submitter || accountForm.querySelector("button[type='submit']");
+    const form = new FormData(accountForm);
+    submitButton.disabled = true;
+    let account;
     try {
-      await api("/api/accounts", { method: "POST", body: JSON.stringify(Object.fromEntries(form)) });
-      $("#accountDialog").close();
-      event.currentTarget.reset();
-      toast("账号档案记录已建立");
-      await refresh();
+      ({ account } = await api("/api/accounts", { method: "POST", body: JSON.stringify(Object.fromEntries(form)) }));
     } catch (error) {
       toast(`创建失败：${readableError(error.message)}`, true);
+      submitButton.disabled = false;
+      return;
     }
+    accountForm.reset();
+    $("#accountDialog").close();
+    submitButton.disabled = false;
+    state.accounts = [...state.accounts.filter((item) => item.id !== account.id), account];
+    renderAccounts();
+    toast("账号档案记录已建立");
+    refresh().catch((error) => toast(`账号已创建，列表同步失败：${readableError(error.message)}`, true));
   });
 }

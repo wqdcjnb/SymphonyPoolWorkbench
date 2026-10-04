@@ -289,7 +289,7 @@ export function createPartnerApi({ databasePath, generatedRoot, uploadRoot, port
       json(response, safe.status, { error: { code: safe.code, message: safe.message } });
     }
   }
-  return { handle, store, wake, deliver,
+  return { handle, store, wake, deliver, baseUrl: config.baseUrl,
     start() {
       if (!stopped) return;
       stopped = false;

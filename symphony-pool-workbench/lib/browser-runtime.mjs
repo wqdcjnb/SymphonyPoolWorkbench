@@ -5,6 +5,7 @@ export function browserRuntime({ projectRoot, workspaceRoot, platform = process.
   const windows = platform === "win32";
   return {
     windows,
+    desktopRoot: path.resolve(env.WORKBENCH_DESKTOP_ROOT || path.join(projectRoot, "data", "login-desktops")),
     pythonExecutable: pythonExecutable || env.WORKBENCH_PYTHON || path.join(projectRoot,
       ".venv", windows ? "Scripts" : "bin", windows ? "python.exe" : "python"),
     launcherPath: path.resolve(launcherPath || path.join(workspaceRoot, "tools",
@@ -17,5 +18,6 @@ export function profileLaunchCommand(runtime, account) {
     ? { executable: "powershell.exe", args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
       runtime.launcherPath, "-AccountId", account.id, "-LoginType", account.loginType] }
     : { executable: runtime.pythonExecutable, args: [runtime.launcherPath,
-      "--profile", account.profilePath, "--login-type", account.loginType] };
+      "--profile", account.profilePath, "--login-type", account.loginType,
+      "--account-id", account.id, "--desktop-root", runtime.desktopRoot] };
 }

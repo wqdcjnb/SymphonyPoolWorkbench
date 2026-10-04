@@ -19,6 +19,7 @@ Node.js 24，原生 HTTP 服务和 SQLite；前端使用 HTML、CSS 与 JavaScri
 | `tests/`、`../tools/test_*.py` | 自动测试 |
 | `../tools/` | 浏览器登录、账号验收、生成执行及发布工具 |
 | `deploy/ubuntu/` | Ubuntu 安装器、桌面进程管理、用户服务及 HTTPS 代理示例 |
+| `deploy/docker/` | Docker 镜像、Compose、局域网 HTTPS 代理和接入文档生成 |
 
 ## 账号池与自动队列
 

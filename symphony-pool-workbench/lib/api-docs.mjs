@@ -36,8 +36,16 @@ function inline(value) {
   return output + escape(value.slice(end));
 }
 
-export function renderApiDocumentation() {
-  const lines = fs.readFileSync(new URL("PARTNER_API.md", root), "utf8").split(/\r?\n/);
+export function renderApiDocumentation({ baseUrl } = {}) {
+  let source = fs.readFileSync(new URL("PARTNER_API.md", root), "utf8");
+  if (baseUrl) {
+    const base = new URL(baseUrl);
+    if (!["http:", "https:"].includes(base.protocol) || base.username || base.password
+      || base.pathname !== "/v1" || base.search || base.hash) throw new Error("INVALID_DOCS_BASE_URL");
+    source = source.replaceAll("http://127.0.0.1:8787/v1", base.href)
+      .replace("本机 API Base URL", "当前 API Base URL");
+  }
+  const lines = source.split(/\r?\n/);
   const content = [], headings = [];
   for (let i = 0; i < lines.length;) {
     const line = lines[i];

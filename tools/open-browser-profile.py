@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -13,6 +14,8 @@ import time
 from playwright.sync_api import sync_playwright
 
 from browser_runtime import generation_browser_options
+from desktop_routes import existing_session, process_identity, stop_file, write_session
+from login_desktop import LoginDesktop, desktop_result
 
 
 URLS = {
@@ -30,7 +33,26 @@ def status_code(error):
     return "PROFILE_LAUNCH_FAILED"
 
 
-def serve(args):
+def running_browser_pid(profile, proc_root=Path("/proc"), hostname=None):
+    """Recognize only a live Chrome process holding this exact profile."""
+    lock = profile / "SingletonLock"
+    try:
+        target = os.readlink(lock)
+        prefix = f"{hostname or socket.gethostname()}-"
+        if not target.startswith(prefix):
+            return None
+        pid = int(target[len(prefix):])
+        args = (proc_root / str(pid) / "cmdline").read_bytes().split(b"\0")
+        browser = Path(os.fsdecode(args[0])).name.lower()
+        profile_arg = os.fsencode(f"--user-data-dir={profile}")
+        if browser not in ("chrome", "chromium") or profile_arg not in args:
+            return None
+        return pid
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def serve_browser(args):
     status = Path(args.status_file)
     ready = False
 
@@ -40,25 +62,25 @@ def serve(args):
         with sync_playwright() as playwright:
             context = playwright.chromium.launch_persistent_context(
                 args.profile, **generation_browser_options(), headless=False,
-                args=["--profile-directory=Default"], timeout=20_000,
-                viewport={"width": 1440, "height": 900}, accept_downloads=False,
+                args=["--profile-directory=Default", "--window-size=1280,800"], timeout=20_000,
+                no_viewport=True, accept_downloads=False,
             )
             try:
                 # Startup is independent of platform network latency. Login errors remain visible.
-                status.write_text(json.dumps({"ok": True}), encoding="utf-8")
+                write_session(status, {"ok": True, "browserPid": running_browser_pid(Path(args.profile))})
                 ready = True
                 page = context.pages[0] if context.pages else context.new_page()
                 try:
-                    page.goto(URLS[args.login_type], wait_until="domcontentloaded", timeout=60_000)
+                    page.goto(URLS[args.login_type], wait_until="commit", timeout=8_000)
                 except Exception:
                     pass
-                while context.pages:
+                while context.pages and not stop_file(args.desktop_root, args.profile).exists():
                     context.pages[0].wait_for_timeout(500)
             finally:
                 context.close()
     except (Exception, KeyboardInterrupt) as error:
         if not ready:
-            status.write_text(json.dumps({"ok": False, "error": status_code(error)}), encoding="utf-8")
+            write_session(status, {"ok": False, "error": status_code(error)})
 
 
 def launch(args):
@@ -67,16 +89,26 @@ def launch(args):
     profile = Path(args.profile)
     if not profile.is_absolute():
         return {"ok": False, "error": "PROFILE_LAUNCH_FAILED"}
+
+
     generation_browser_options()  # Reject invalid channel before starting a child.
+    session = existing_session(args.desktop_root, profile, args.account_id)
+    if session:
+        return desktop_result(session, True)
+    existing_pid = running_browser_pid(profile)
+    if existing_pid:
+        # An old shared desktop or a generation worker cannot be used as this login desktop.
+        return {"ok": False, "error": "PROFILE_IN_USE"}
     profile.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="symphony-login-") as temporary:
         status = Path(temporary) / "status.json"
         child = subprocess.Popen([
             sys.executable, str(Path(__file__).resolve()), "--serve", "--status-file", str(status),
             "--profile", str(profile), "--login-type", args.login_type,
+            "--account-id", args.account_id, "--desktop-root", args.desktop_root,
         ], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             start_new_session=True, close_fds=True)
-        for _ in range(240):
+        for _ in range(350):
             if status.is_file():
                 try:
                     return json.loads(status.read_text(encoding="utf-8"))
@@ -89,11 +121,24 @@ def launch(args):
         if child.poll() is None:
             os.killpg(child.pid, signal.SIGTERM)
             try:
-                child.wait(timeout=2)
+                child.wait(timeout=6)
             except subprocess.TimeoutExpired:
                 os.killpg(child.pid, signal.SIGKILL)
                 child.wait()
         return {"ok": False, "error": "PROFILE_LAUNCH_FAILED"}
+
+
+def close_login(args):
+    session = existing_session(args.desktop_root, args.profile, args.account_id)
+    if not session:
+        return {"ok": True, "alreadyClosed": True}
+    # Only the validated login supervisor may be stopped, never a generation worker.
+    os.kill(session["manager"]["pid"], signal.SIGTERM)
+    for _ in range(200):
+        if process_identity(session["manager"]["pid"]) != session["manager"]:
+            return {"ok": True}
+        time.sleep(0.1)
+    return {"ok": False, "error": "PROFILE_CLOSE_TIMEOUT"}
 
 
 def main():
@@ -101,15 +146,27 @@ def main():
     parser.add_argument("--profile", required=True)
     parser.add_argument("--login-type", choices=tuple(URLS), required=True)
     parser.add_argument("--serve", action="store_true")
+    parser.add_argument("--browser", action="store_true")
+    parser.add_argument("--close", action="store_true")
     parser.add_argument("--status-file")
+    parser.add_argument("--account-id", required=True)
+    parser.add_argument("--desktop-root", default=os.environ.get("WORKBENCH_DESKTOP_ROOT",
+        str(Path(__file__).resolve().parents[1] / "symphony-pool-workbench/data/login-desktops")))
     args = parser.parse_args()
-    if args.serve:
+    if args.serve or args.browser:
         if not args.status_file:
             parser.error("--serve requires --status-file")
-        serve(args)
+        if args.browser:
+            serve_browser(args)
+        else:
+            LoginDesktop(args.desktop_root, args.profile, args.account_id).run([
+                sys.executable, str(Path(__file__).resolve()), "--browser",
+                "--profile", args.profile, "--login-type", args.login_type,
+                "--account-id", args.account_id,
+            ], args.status_file)
         return 0
     try:
-        result = launch(args)
+        result = close_login(args) if args.close else launch(args)
     except Exception as error:
         result = {"ok": False, "error": status_code(error)}
     print(json.dumps(result))

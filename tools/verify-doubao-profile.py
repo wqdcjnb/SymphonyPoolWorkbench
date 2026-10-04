@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
-from browser_runtime import browser_channels
+from browser_runtime import browser_channels, profile_in_use_error
 
 
 DOUBAO_URL = "https://www.doubao.com/chat/"
@@ -202,12 +202,7 @@ def main() -> int:
                 context = playwright.chromium.launch_persistent_context(**options)
                 break
             except Exception as error:
-                detail = str(error).lower()
-                if (
-                    "processsingleton" in detail
-                    or "user data directory is already in use" in detail
-                    or ("exitcode=0" in detail and (profile_path / "lockfile").exists())
-                ):
+                if profile_in_use_error(error, profile_path):
                     summary["error"] = "PROFILE_IN_USE"
                     break
         if context is None:

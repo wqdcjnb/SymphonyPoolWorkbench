@@ -1,0 +1,68 @@
+{
+    admin off
+    auto_https disable_redirects
+    default_sni {$SYMPHONY_LAN_IP}
+    skip_install_trust
+    servers {
+        protocols h1 h2
+    }
+}
+
+https://{$SYMPHONY_LAN_IP}:8443 {
+    tls internal
+    header X-Content-Type-Options nosniff
+    header X-Frame-Options DENY
+    @api path /v1 /v1/*
+    handle @api {
+        reverse_proxy 127.0.0.1:8787 {
+            header_up Host 127.0.0.1:8787
+            header_up X-Symphony-Api-Only 1
+        }
+    }
+    handle /api-docs {
+        root * /srv
+        rewrite * /index.html
+        file_server
+    }
+    handle_path /api-docs/* {
+        root * /srv
+        file_server
+    }
+    handle / {
+        redir /api-docs 302
+    }
+    handle {
+        respond "Not found" 404
+    }
+}
+
+http://:8080 {
+    @badHost not host 127.0.0.1 localhost
+    respond @badHost "Host not allowed" 403
+    @badOrigin {
+        header Origin *
+        not {
+            header Origin http://127.0.0.1:{$SYMPHONY_ADMIN_PORT}
+            header Origin http://localhost:{$SYMPHONY_ADMIN_PORT}
+        }
+    }
+    respond @badOrigin "Origin not allowed" 403
+    reverse_proxy 127.0.0.1:8787 {
+        header_up Host 127.0.0.1:8787
+        header_up Origin http://127.0.0.1:8787
+    }
+}
+
+http://:6081 {
+    @badHost not host 127.0.0.1 localhost
+    respond @badHost "Host not allowed" 403
+    @badOrigin {
+        header Origin *
+        not {
+            header Origin http://127.0.0.1:{$SYMPHONY_DESKTOP_PORT}
+            header Origin http://localhost:{$SYMPHONY_DESKTOP_PORT}
+        }
+    }
+    respond @badOrigin "Origin not allowed" 403
+    reverse_proxy 127.0.0.1:6080
+}

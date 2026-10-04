@@ -1,5 +1,5 @@
 # Add inside an existing HTTPS server block after configuring the domain and certificate.
-# Only the partner API is public. Management pages and noVNC are accessed over SSH.
+# Only the partner API is public. Management pages and Xpra are accessed over SSH.
 location ^~ /v1/ {
     client_max_body_size 110m;
     proxy_pass http://127.0.0.1:8787;

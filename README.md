@@ -1,6 +1,18 @@
-# Symphony Pool Workbench · V1.1.0
+# Symphony Pool Workbench · V1.3.0
 
 支持 Windows 本机与 Ubuntu 24.04 LTS 部署的视频生成工作台，使用独立浏览器档案管理 Symphony / TikTok 和豆包账号。支持文字或图片生成视频、账号池调度，以及供合作方调用的任务 API。
+
+## 本机 Docker 局域网测试
+
+Windows Docker Desktop 使用 Linux 容器模式。在项目根目录打开 PowerShell：
+
+```powershell
+.\tools\start-docker-test.ps1
+```
+
+脚本创建独立的容器、数据卷、测试密钥和 HTTPS 证书。测试 API 默认使用电脑局域网 IP 的 9443 端口；容器管理页为 `http://127.0.0.1:8788/accounts`。安装 Windows Xpra 客户端后，从账号卡片打开独立 Chrome 登录窗口。对方使用脚本生成的 `.docker-local/partner-test/` 接入文件夹。
+
+账号需要在容器里重新登录。Windows 防火墙放行步骤、证书使用和停止命令见 [Docker 局域网测试说明](symphony-pool-workbench/docs/DOCKER.md)。
 
 ## Ubuntu 24.04 LTS 服务器
 
@@ -43,6 +55,7 @@ python -m venv .venv
 | [本机程序调用说明](symphony-pool-workbench/VIDEO_API.md) | 本机上传素材和开始生成 |
 | [开发与维护](symphony-pool-workbench/docs/DEVELOPMENT.md) | 代码结构、队列实现、测试和发布打包 |
 | [Ubuntu 部署](symphony-pool-workbench/docs/UBUNTU.md) | 自动识别架构、远程登录账号、后台服务与 HTTPS 接入 |
+| [Docker 局域网测试](symphony-pool-workbench/docs/DOCKER.md) | 独立数据、局域网 API、测试 Key、证书和账号登录 |
 | [版本说明](symphony-pool-workbench/CHANGELOG.md) | V1 功能与使用限制 |
 
 ## 对外 API 配置
@@ -55,7 +68,7 @@ python -m venv .venv
 
 ## 干净交付
 
-按[开发与维护中的打包步骤](symphony-pool-workbench/docs/DEVELOPMENT.md#发布干净版本)生成 `release/SymphonyPoolWorkbench-v1.1.0.zip`，旁边的 `.zip.sha256` 文件用于校验压缩包。只需把这两个文件交给使用者。GitHub 仓库存放源码，`release/` 是本机生成目录，不提交到 Git。
+按[开发与维护中的打包步骤](symphony-pool-workbench/docs/DEVELOPMENT.md#发布干净版本)生成 `release/SymphonyPoolWorkbench-v1.3.0.zip`，旁边的 `.zip.sha256` 文件用于校验压缩包。只需把这两个文件交给使用者。GitHub 仓库存放源码，`release/` 是本机生成目录，不提交到 Git。
 
 交付包包含源码、启动脚本、依赖清单、文档和测试；不包含账号档案、任务数据库、图片、视频、日志、备份、Git 历史、虚拟环境或实际密钥。接收方解压后自行安装依赖、登录账号和配置 API。
 

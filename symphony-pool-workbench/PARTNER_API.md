@@ -6,7 +6,7 @@
 
 - **服务名称：** `symphony`。
 - **本机 API Base URL：** `http://127.0.0.1:8787/v1`
-- **本机文档页面：** `http://127.0.0.1:8787/api-docs`，无需 Key 即可查看和下载文档。
+- **文档页面：** 工作台的 `/api-docs` 页面，无需 Key 即可查看和下载文档；测试部署也可单独提供文档访问地址。
 - **公网 API Base URL：** 部署服务器时配置，例如 `https://symphony.example.com/v1`；此处仅为格式示例，正式地址由服务方提供。
 - **鉴权：** `Authorization: Bearer <API_KEY>`，使用一个共享 Key，不使用 OAuth，不管理对方的终端用户。
 - **机器可读规范：** [OpenAPI 3.1 JSON](docs/partner-openapi.json)，可导入 Apifox、Postman 等工具。

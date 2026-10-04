@@ -1,0 +1,110 @@
+name: symphony-local-test
+services:
+  init-data:
+    image: symphony-workbench:local-test
+    pull_policy: never
+    user: "0:0"
+    network_mode: none
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["chown 10001:10001 /app/symphony-pool-workbench/data /profiles /public-docs && chmod 700 /app/symphony-pool-workbench/data /profiles && chmod 755 /public-docs"]
+    volumes:
+      - workbench_data:/app/symphony-pool-workbench/data
+      - browser_profiles:/profiles
+      - public_docs:/public-docs
+    security_opt:
+      - no-new-privileges:true
+  workbench:
+    image: symphony-workbench:local-test
+    build:
+      context: ../../..
+      dockerfile: symphony-pool-workbench/deploy/docker/Dockerfile
+    platform: linux/amd64
+    hostname: symphony-local-test
+    init: true
+    depends_on:
+      init-data:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    stop_grace_period: 60s
+    shm_size: 1gb
+    cpus: 4
+    mem_limit: 8g
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      WORKBENCH_HOST: 127.0.0.1
+      WORKBENCH_PORT: "8787"
+      WORKBENCH_DESKTOP_PORT: "${SYMPHONY_DESKTOP_PORT:-6081}"
+      WORKBENCH_MAX_CONCURRENT_JOBS: "${SYMPHONY_CONCURRENCY:-2}"
+      PARTNER_PUBLIC_BASE_URL: "https://${SYMPHONY_LAN_IP:?Set SYMPHONY_LAN_IP}:${SYMPHONY_API_PORT:-9443}/v1"
+    ports:
+      - "${SYMPHONY_LAN_IP}:${SYMPHONY_API_PORT:-9443}:8443"
+      - "127.0.0.1:${SYMPHONY_ADMIN_PORT:-8788}:8080"
+      - "127.0.0.1:${SYMPHONY_DESKTOP_PORT:-6081}:6081"
+    volumes:
+      - workbench_data:/app/symphony-pool-workbench/data
+      - browser_profiles:/profiles
+      - public_docs:/public-docs
+    secrets:
+      - api_key
+      - download_secret
+      - webhook_secret
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 30s
+
+  gateway:
+    image: caddy:2.11.4-alpine
+    network_mode: service:workbench
+    restart: unless-stopped
+    depends_on:
+      workbench:
+        condition: service_healthy
+        restart: true
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    environment:
+      SYMPHONY_LAN_IP: "${SYMPHONY_LAN_IP}"
+      SYMPHONY_ADMIN_PORT: "${SYMPHONY_ADMIN_PORT:-8788}"
+      SYMPHONY_DESKTOP_PORT: "${SYMPHONY_DESKTOP_PORT:-6081}"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - type: volume
+        source: public_docs
+        target: /srv
+        read_only: true
+        volume:
+          nocopy: true
+      - caddy_data:/data
+      - caddy_config:/config
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/api/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+
+volumes:
+  workbench_data:
+  browser_profiles:
+  public_docs:
+  caddy_data:
+  caddy_config:
+
+secrets:
+  api_key:
+    file: ../../../.docker-local/secrets/api-key.txt
+  download_secret:
+    file: ../../../.docker-local/secrets/download-secret.txt
+  webhook_secret:
+    file: ../../../.docker-local/secrets/webhook-secret.txt

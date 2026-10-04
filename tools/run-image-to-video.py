@@ -7,12 +7,13 @@ prints cookies, prompts, page text, or signed media URLs.
 import json
 import re
 import sys
+import time
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
-from browser_runtime import generation_browser_options
+from browser_runtime import generation_browser_options, profile_in_use_error
 
 
 DOUBAO_CREATE = "https://www.doubao.com/chat/create-image"
@@ -59,6 +60,26 @@ def platform_prompt(job: dict) -> str:
     positive = job["prompt"].strip()
     negative = (job.get("negativePrompt") or "").strip()
     return f"{positive}\n\n请避免出现：{negative}" if negative else positive
+
+
+def doubao_logged_out(page) -> bool:
+    parsed = urlparse(page.url)
+    return bool(parse_qs(parsed.query).get("from_logout") or
+                page.get_by_role("button", name="登录", exact=True).is_visible())
+
+
+def wait_for_doubao_task(page, timeout_seconds=90) -> str:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        parsed = urlparse(page.url)
+        if parsed.hostname == "www.doubao.com" and re.fullmatch(r"/chat/\d+", parsed.path):
+            return page.url.split("?", 1)[0]
+        if doubao_logged_out(page):
+            # The click happened, but no durable platform task ID was acknowledged.
+            # Keep this distinct from a safe, pre-submission LOGIN_REQUIRED failure.
+            raise RuntimeError("LOGIN_EXPIRED_DURING_SUBMISSION")
+        page.wait_for_timeout(500)
+    raise RuntimeError("DOUBAO_SUBMISSION_UNCONFIRMED")
 
 
 def save_doubao_video(context, page, output_path: Path) -> None:
@@ -144,6 +165,8 @@ def run_doubao(context, job: dict, output_path: Path) -> None:
             timeout=120_000,
         )
     page.locator('[contenteditable="true"]').first.fill(platform_prompt(job))
+    if doubao_logged_out(page):
+        raise RuntimeError("LOGIN_REQUIRED")
     send = page.locator('[data-testid="chat_input_send_button"]')
     if not send.is_enabled():
         raise RuntimeError("SUBMIT_NOT_READY")
@@ -155,8 +178,7 @@ def run_doubao(context, job: dict, output_path: Path) -> None:
     except PlaywrightTimeoutError:
         pass
 
-    page.wait_for_url(re.compile(r"https://www\.doubao\.com/chat/\d+"), timeout=90_000)
-    remote_url = page.url.split("?", 1)[0]
+    remote_url = wait_for_doubao_task(page)
     emit("submitted", remoteUrl=remote_url)
     try:
         platform_state = page.wait_for_function(
@@ -325,15 +347,19 @@ def run_tiktok(context, job: dict, output_path: Path) -> None:
 
 
 def main() -> int:
+    job = {}
+    launching_browser = False
     try:
         job = json.load(sys.stdin)
         verify_job(job)
         output = Path(job["outputPath"])
         with sync_playwright() as playwright:
+            launching_browser = True
             context = playwright.chromium.launch_persistent_context(
                 job["profilePath"], **generation_browser_options(), headless=False,
                 accept_downloads=True, viewport={"width": 1440, "height": 900},
             )
+            launching_browser = False
             try:
                 if job["service"] == "doubao":
                     run_doubao(context, job, output)
@@ -343,9 +369,9 @@ def main() -> int:
                 context.close()
         return 0
     except Exception as error:
-        code = str(error)
+        code = "PROFILE_IN_USE" if profile_in_use_error(error, job.get("profilePath")) else str(error)
         if not re.fullmatch(r"[A-Z][A-Z0-9_]{2,80}", code):
-            code = "BROWSER_AUTOMATION_FAILED"
+            code = "BROWSER_LAUNCH_FAILED" if launching_browser else "BROWSER_AUTOMATION_FAILED"
         emit("error", code=code)
         return 1
 

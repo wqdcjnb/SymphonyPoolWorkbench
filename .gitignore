@@ -1,6 +1,7 @@
 /*_sandbox_data/
 /.migration-backups/
 /release/
+/.docker-local/
 **/.env
 **/.env.*
 !**/.env.example

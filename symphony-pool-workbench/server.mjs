@@ -18,6 +18,7 @@ import { createPartnerApi } from "./lib/partner-api.mjs";
 import { renderPage } from "./lib/pages.mjs";
 import { documentationFile } from "./lib/api-docs.mjs";
 import { browserRuntime, profileLaunchCommand } from "./lib/browser-runtime.mjs";
+import { profileInUse } from "./lib/profile-usage.mjs";
 import { AUTO_SELECTION, ALL_VIDEO_MODELS, ALL_VIDEO_DURATIONS, VIDEO_ASPECT_RATIOS,
   hasCompatibleService } from "./lib/job-routing.mjs";
 
@@ -100,6 +101,11 @@ function resolveProfilePath(workspaceRoot, accountId) {
     throw new Error("INVALID_PROFILE_PATH");
   }
   return candidate;
+}
+
+function pathEntryExists(filePath) {
+  try { fs.lstatSync(filePath); return true; }
+  catch (error) { if (error.code === "ENOENT") return false; throw error; }
 }
 
 function sameOriginAllowed(request, host, port) {
@@ -202,6 +208,7 @@ export function createWorkbenchServer(options = {}) {
   if (host !== "127.0.0.1") throw new Error("LOCAL_HOST_REQUIRED");
   const port = Number(options.port || 8787);
   const workspaceRoot = path.resolve(options.workspaceRoot || defaultWorkspaceRoot);
+  const profileRoot = path.resolve(options.profileRoot || workspaceRoot);
   const databasePath = path.resolve(options.databasePath || path.join(projectRoot, "data", "workbench.sqlite"));
   const verifierPath = path.resolve(options.verifierPath || path.join(workspaceRoot, "tools", "verify-symphony-profile.py"));
   const doubaoVerifierPath = path.resolve(options.doubaoVerifierPath || path.join(workspaceRoot, "tools", "verify-doubao-profile.py"));
@@ -211,6 +218,7 @@ export function createWorkbenchServer(options = {}) {
   const runtime = browserRuntime({ projectRoot, workspaceRoot, platform: options.runtimePlatform,
     pythonExecutable: options.pythonExecutable, launcherPath: options.launcherPath });
   const { launcherPath, pythonExecutable } = runtime;
+  const desktopPort = runtime.windows ? null : Number(options.desktopPort || process.env.WORKBENCH_DESKTOP_PORT || 6080);
   const store = createStore(databasePath);
   const videoApiStore = createVideoApiStore(databasePath);
   const videoApi = createVideoApiClient({ baseUrl: options.videoApiBaseUrl });
@@ -279,8 +287,10 @@ export function createWorkbenchServer(options = {}) {
       total: listing.total, totalPages: listing.totalPages };
   };
   const verificationLocks = new Set();
+  const profileLaunchLocks = new Set();
+  const profileRetryAfter = new Map();
   const activeProcesses = new Set();
-  const schedulerIntervalMs = Number(options.schedulerIntervalMs ?? process.env.WORKBENCH_SCHEDULER_INTERVAL_MS ?? 10_000);
+  const schedulerIntervalMs = Number(options.schedulerIntervalMs ?? process.env.WORKBENCH_SCHEDULER_INTERVAL_MS ?? 2_000);
   const maxConcurrentJobs = Number(options.maxConcurrentJobs ?? process.env.WORKBENCH_MAX_CONCURRENT_JOBS ?? 2);
   const maxVerificationAgeMs = Number(options.maxVerificationAgeMs ?? 24 * 60 * 60_000);
 
@@ -389,7 +399,11 @@ export function createWorkbenchServer(options = {}) {
         const possiblySubmitted = new Set(["submitting", "submitted", "generating", "collecting", "reconciling"]).has(current?.status);
         const quotaExhausted = workerError === "DOUBAO_FREE_QUOTA_EXHAUSTED";
         const errorCode = workerError || "WORKER_EXITED";
+        if (errorCode === "LOGIN_EXPIRED_DURING_SUBMISSION") {
+          store.markAccountLoginRequired(account.id, errorCode);
+        }
         if (job.queuedAt != null && (quotaExhausted || !possiblySubmitted)) {
+          if (errorCode === "PROFILE_IN_USE") profileRetryAfter.set(account.id, Date.now() + 5_000);
           store.handleDispatchFailure(job.id, account.id, errorCode,
             { quotaExhausted, beforeSubmission: !possiblySubmitted });
         } else {
@@ -411,8 +425,8 @@ export function createWorkbenchServer(options = {}) {
     }
   };
 
-  if (store.listAccounts().length === 0) {
-    const defaultProfile = resolveProfilePath(workspaceRoot, DEFAULT_ACCOUNT_ID);
+  if (store.listAccounts().length === 0 && !store.hasAccountHistory()) {
+    const defaultProfile = resolveProfilePath(profileRoot, DEFAULT_ACCOUNT_ID);
     store.ensureAccount({
       id: DEFAULT_ACCOUNT_ID,
       label: "Symphony TK 一号账号",
@@ -464,7 +478,18 @@ export function createWorkbenchServer(options = {}) {
   };
 
   const queueScheduler = createQueueScheduler({
-    claim: () => store.claimNextQueuedJob({ maxVerificationAgeMs }),
+    claim: () => {
+      const unavailableAccountIds = store.listAccounts().filter((account) => {
+        if (account.status !== "ready") return false;
+        if (profileLaunchLocks.has(account.id) || verificationLocks.has(account.id)
+          || (profileRetryAfter.get(account.id) || 0) > Date.now()) return true;
+        profileRetryAfter.delete(account.id);
+        // Local ownership checks avoid launching a second Chrome on a login profile.
+        try { return (options.profileInUse || profileInUse)(account.profilePath); }
+        catch { return true; }
+      }).map((account) => account.id);
+      return store.claimNextQueuedJob({ maxVerificationAgeMs, unavailableAccountIds });
+    },
     execute: executeJob,
     afterExecute: reverifyAfterQueuedJob,
     canRun: () => store.hasQueuedJobs() && fs.existsSync(pythonExecutable) && fs.existsSync(workerPath),
@@ -499,6 +524,11 @@ export function createWorkbenchServer(options = {}) {
       } catch {
         throw new Error("INVALID_URL");
       }
+      // The LAN proxy marks public requests; check again after URL normalization.
+      if (request.headers["x-symphony-api-only"] === "1"
+        && pathname !== "/v1" && !pathname.startsWith("/v1/")) {
+        return json(response, 404, { error: "NOT_FOUND" });
+      }
       if (pathname === "/v1" || pathname.startsWith("/v1/")) {
         return await partnerApi.handle(request, response, requestUrl, pathname);
       }
@@ -518,6 +548,7 @@ export function createWorkbenchServer(options = {}) {
           jobs: store.listJobs(50),
           events: store.listEvents(60),
           automationEnabled: true,
+          desktopPort,
         });
       }
 
@@ -535,16 +566,69 @@ export function createWorkbenchServer(options = {}) {
         if (store.listAccounts().some((account) => account.id.toLowerCase() === id.toLowerCase())) {
           throw new Error("ACCOUNT_ALREADY_EXISTS");
         }
+        const profilePath = resolveProfilePath(profileRoot, id);
+        if (pathEntryExists(profilePath)) throw new Error("ACCOUNT_PROFILE_ALREADY_EXISTS");
         const account = store.ensureAccount({
           id,
           label,
           loginType,
           service: loginType === "doubao" ? "doubao" : "symphony",
           workerId,
-          profilePath: resolveProfilePath(workspaceRoot, id),
+          profilePath,
           status: "provisioning",
         });
         return json(response, 201, { account });
+      }
+
+      const deleteAccountMatch = pathname.match(/^\/api\/accounts\/([^/]+)$/);
+      if (request.method === "DELETE" && deleteAccountMatch) {
+        const id = safeAccountId(deleteAccountMatch[1]);
+        const account = store.getAccount(id);
+        if (!account) throw new Error("ACCOUNT_NOT_FOUND");
+        if (verificationLocks.has(id)) throw new Error("VERIFICATION_ALREADY_RUNNING");
+        if (profileLaunchLocks.has(id)) throw new Error("ACCOUNT_PROFILE_IN_USE");
+        if (store.hasPendingJobForAccount(id)) throw new Error("ACCOUNT_HAS_PENDING_JOBS");
+        const expectedProfile = resolveProfilePath(profileRoot, id);
+        if (path.resolve(account.profilePath).toLowerCase() !== expectedProfile.toLowerCase()) {
+          throw new Error("ACCOUNT_PROFILE_PATH_INVALID");
+        }
+        let stagedProfile = null;
+        if (pathEntryExists(expectedProfile)) {
+          const profileStat = fs.lstatSync(expectedProfile);
+          if (!profileStat.isDirectory() || profileStat.isSymbolicLink()) {
+            throw new Error("ACCOUNT_PROFILE_NOT_DIRECTORY");
+          }
+          const actualRoot = fs.realpathSync.native(profileRoot);
+          const actualProfile = fs.realpathSync.native(expectedProfile);
+          if (path.dirname(actualProfile).toLowerCase() !== actualRoot.toLowerCase()
+            || path.basename(actualProfile).toLowerCase() !== path.basename(expectedProfile).toLowerCase()) {
+            throw new Error("ACCOUNT_PROFILE_PATH_INVALID");
+          }
+          if (profileInUse(expectedProfile)) {
+            throw new Error("ACCOUNT_PROFILE_IN_USE");
+          }
+          stagedProfile = path.join(profileRoot, `.${id}.deleting-${randomUUID()}`);
+          if (path.dirname(stagedProfile) !== profileRoot) throw new Error("ACCOUNT_PROFILE_PATH_INVALID");
+          try { fs.renameSync(expectedProfile, stagedProfile); }
+          catch (error) {
+            if (["EPERM", "EACCES", "EBUSY"].includes(error.code)) throw new Error("ACCOUNT_PROFILE_IN_USE");
+            throw new Error("ACCOUNT_PROFILE_MOVE_FAILED");
+          }
+        }
+        try { store.deleteAccount(id); }
+        catch (error) {
+          if (stagedProfile) {
+            try { fs.renameSync(stagedProfile, expectedProfile); }
+            catch { throw new Error("ACCOUNT_PROFILE_ROLLBACK_FAILED"); }
+          }
+          throw error;
+        }
+        let profileCleanupPending = false;
+        if (stagedProfile) {
+          try { fs.rmSync(stagedProfile, { recursive: true }); }
+          catch { profileCleanupPending = true; }
+        }
+        return json(response, 200, { ok: true, accountId: id, profileCleanupPending });
       }
 
       const accountMatch = pathname.match(/^\/api\/accounts\/([^/]+)$/);
@@ -559,13 +643,14 @@ export function createWorkbenchServer(options = {}) {
           return json(response, 200, { account: store.updateAccountLabel(id, label) });
         }
         if (verificationLocks.has(id)) throw new Error("VERIFICATION_ALREADY_RUNNING");
+        if (profileLaunchLocks.has(id)) throw new Error("ACCOUNT_PROFILE_IN_USE");
         if (store.hasRunningJobForAccount(id)) throw new Error("ACCOUNT_ALREADY_RUNNING");
         if (nextId.toLowerCase() === id.toLowerCase()) throw new Error("ACCOUNT_ID_CASE_CONFLICT");
         if (store.listAccounts().some((item) => item.id.toLowerCase() === nextId.toLowerCase())) {
           throw new Error("ACCOUNT_ALREADY_EXISTS");
         }
-        const oldProfilePath = resolveProfilePath(workspaceRoot, id);
-        const nextProfilePath = resolveProfilePath(workspaceRoot, nextId);
+        const oldProfilePath = resolveProfilePath(profileRoot, id);
+        const nextProfilePath = resolveProfilePath(profileRoot, nextId);
         if (path.resolve(account.profilePath).toLowerCase() !== oldProfilePath.toLowerCase()) {
           throw new Error("ACCOUNT_PROFILE_PATH_INVALID");
         }
@@ -573,6 +658,7 @@ export function createWorkbenchServer(options = {}) {
         let movedProfile = false;
         if (fs.existsSync(oldProfilePath)) {
           if (!fs.lstatSync(oldProfilePath).isDirectory()) throw new Error("ACCOUNT_PROFILE_NOT_DIRECTORY");
+          if (profileInUse(oldProfilePath)) throw new Error("ACCOUNT_PROFILE_IN_USE");
           try {
             fs.renameSync(oldProfilePath, nextProfilePath);
             movedProfile = true;
@@ -605,28 +691,68 @@ export function createWorkbenchServer(options = {}) {
         const account = store.getAccount(id);
         if (!account) return json(response, 404, { error: "ACCOUNT_NOT_FOUND" });
         if (store.hasRunningJobForAccount(id)) throw new Error("ACCOUNT_ALREADY_RUNNING");
+        if (profileLaunchLocks.has(id) || verificationLocks.has(id)) throw new Error("ACCOUNT_PROFILE_IN_USE");
         if (!fs.existsSync(launcherPath)) return json(response, 500, { error: "LAUNCHER_NOT_FOUND" });
         if (!runtime.windows && !fs.existsSync(pythonExecutable)) {
           return json(response, 503, { error: "PYTHON_NOT_CONFIGURED" });
         }
         const launch = profileLaunchCommand(runtime, account);
+        let launchResult;
+        profileLaunchLocks.add(id);
         try {
-          await execFileAsync(launch.executable, launch.args, {
+          launchResult = await execFileAsync(launch.executable, launch.args, {
             cwd: workspaceRoot,
             windowsHide: true,
-            timeout: 30_000,
+            timeout: 45_000,
             maxBuffer: 16 * 1024,
           });
         } catch (error) {
           let code = error.killed ? "PROFILE_LAUNCH_TIMEOUT" : "PROFILE_LAUNCH_FAILED";
           try {
             const detail = JSON.parse(error.stdout || "{}");
-            if (["DISPLAY_NOT_CONFIGURED", "PROFILE_IN_USE", "INVALID_BROWSER_CHANNEL"].includes(detail.error)) code = detail.error;
+            if (["DISPLAY_NOT_CONFIGURED", "PROFILE_IN_USE", "INVALID_BROWSER_CHANNEL", "PROFILE_DESKTOP_FAILED"].includes(detail.error)) code = detail.error;
           } catch { }
           return json(response, 500, { error: code });
+        } finally {
+          profileLaunchLocks.delete(id);
+        }
+        let alreadyOpen = false;
+        let desktop;
+        if (!runtime.windows) {
+          try {
+            const detail = JSON.parse(launchResult.stdout);
+            if (detail.ok !== true || detail.desktop?.protocol !== "xpra" || detail.desktop?.accountId !== id
+              || !/^[a-f0-9]{64}$/.test(detail.desktop?.token || "")) throw new Error("INVALID_DESKTOP");
+            alreadyOpen = detail.alreadyOpen === true;
+            desktop = { protocol: "xpra", port: desktopPort, token: detail.desktop.token, accountId: id };
+          } catch { return json(response, 500, { error: "PROFILE_DESKTOP_FAILED" }); }
         }
         store.recordProfileOpened(id);
-        return json(response, 202, { ok: true, accountId: id });
+        return json(response, 202, { ok: true, accountId: id, alreadyOpen, ...(desktop ? { desktop } : {}) });
+      }
+
+      const closeLoginMatch = pathname.match(/^\/api\/accounts\/([^/]+)\/close-login$/);
+      if (request.method === "POST" && closeLoginMatch) {
+        const id = safeAccountId(closeLoginMatch[1]);
+        const account = store.getAccount(id);
+        if (!account) return json(response, 404, { error: "ACCOUNT_NOT_FOUND" });
+        if (runtime.windows) return json(response, 409, { error: "PROFILE_CLOSE_UNSUPPORTED" });
+        if (store.hasRunningJobForAccount(id)) throw new Error("ACCOUNT_ALREADY_RUNNING");
+        if (profileLaunchLocks.has(id) || verificationLocks.has(id)) throw new Error("ACCOUNT_PROFILE_IN_USE");
+        const launch = profileLaunchCommand(runtime, account);
+        profileLaunchLocks.add(id);
+        try {
+          const { stdout } = await execFileAsync(launch.executable, [...launch.args, "--close"], {
+            cwd: workspaceRoot, windowsHide: true, timeout: 25_000, maxBuffer: 16 * 1024,
+          });
+          if (JSON.parse(stdout).ok !== true) throw new Error("PROFILE_CLOSE_FAILED");
+          if ((options.profileInUse || profileInUse)(account.profilePath)) throw new Error("PROFILE_CLOSE_FAILED");
+          return json(response, 200, { ok: true, accountId: id });
+        } catch {
+          return json(response, 500, { error: "PROFILE_CLOSE_FAILED" });
+        } finally {
+          profileLaunchLocks.delete(id);
+        }
       }
 
       const verifyMatch = pathname.match(/^\/api\/accounts\/([^/]+)\/verify$/);
@@ -636,6 +762,7 @@ export function createWorkbenchServer(options = {}) {
         if (!account) return json(response, 404, { error: "ACCOUNT_NOT_FOUND" });
         if (store.hasRunningJobForAccount(id)) throw new Error("ACCOUNT_ALREADY_RUNNING");
         if (verificationLocks.has(id)) return json(response, 409, { error: "VERIFICATION_ALREADY_RUNNING" });
+        if (profileLaunchLocks.has(id)) throw new Error("ACCOUNT_PROFILE_IN_USE");
         verificationLocks.add(id);
         store.setAccountChecking(id);
         try {
@@ -935,6 +1062,13 @@ export function createWorkbenchServer(options = {}) {
       }
 
       if (request.method === "GET" && !pathname.startsWith("/api/")) {
+        const loginPage = pathname.match(/^\/accounts\/([^/]+)\/login$/);
+        if (loginPage) {
+          const id = safeAccountId(loginPage[1]);
+          if (!store.getAccount(id)) return json(response, 404, { error: "ACCOUNT_NOT_FOUND" });
+          response.writeHead(200, { "Content-Type": MIME_TYPES[".html"], "Cache-Control": "no-store" });
+          return fs.createReadStream(path.join(publicRoot, "account-login.html")).pipe(response);
+        }
         const document = documentationFile(pathname);
         if (document) {
           response.writeHead(200, { "Content-Type": document.type, "Cache-Control": "no-store",
@@ -946,7 +1080,7 @@ export function createWorkbenchServer(options = {}) {
           response.writeHead(302, { Location: "/jobs", "Cache-Control": "no-store" });
           return response.end();
         }
-        const html = renderPage(pathname);
+        const html = renderPage(pathname, partnerApi.baseUrl);
         if (html !== null) {
           response.writeHead(200, { "Content-Type": MIME_TYPES[".html"], "Cache-Control": "no-store" });
           return response.end(html);
@@ -981,7 +1115,9 @@ export function createWorkbenchServer(options = {}) {
           || code.includes("NOT_RECOLLECTABLE")
           || code === "ACCOUNT_NOT_READY" || code === "ACCOUNT_ALREADY_EXISTS"
           || code === "ACCOUNT_ID_CASE_CONFLICT" || code === "ACCOUNT_PROFILE_IN_USE"
-          || code === "ACCOUNT_PROFILE_ALREADY_EXISTS" || code === "ACCOUNT_PROFILE_NOT_DIRECTORY" ? 409
+          || code === "ACCOUNT_PROFILE_STATE_UNKNOWN"
+          || code === "ACCOUNT_PROFILE_ALREADY_EXISTS" || code === "ACCOUNT_PROFILE_NOT_DIRECTORY"
+          || code === "ACCOUNT_HAS_PENDING_JOBS" || code === "VERIFICATION_ALREADY_RUNNING" ? 409
           : code === "PAYLOAD_TOO_LARGE" || code === "VIDEO_API_IMAGE_TOO_LARGE" || code === "REFERENCE_IMAGE_TOO_LARGE"
             || code === "REFERENCE_VIDEO_TOO_LARGE" ? 413
             : code === "INTERNAL_ERROR" || code === "ACCOUNT_PROFILE_MOVE_FAILED"
@@ -1030,6 +1166,7 @@ if (isMain) {
     host: process.env.WORKBENCH_HOST || "127.0.0.1",
     port: Number(process.env.WORKBENCH_PORT || 8787),
     databasePath: process.env.WORKBENCH_DATABASE_PATH,
+    profileRoot: process.env.WORKBENCH_PROFILE_ROOT,
   });
   const address = await app.listen();
   console.log(JSON.stringify({ status: "listening", ...address, localOnly: address.host === "127.0.0.1" }));

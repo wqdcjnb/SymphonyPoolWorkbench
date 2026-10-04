@@ -1,6 +1,21 @@
 """Browser selection shared by Linux login, verification, and video execution."""
 
 import os
+from pathlib import Path
+
+
+def profile_in_use_error(error, profile_path=None):
+    """Recognize Chromium's headed and headless responses to an occupied profile."""
+    detail = str(error).lower()
+    if any(marker in detail for marker in (
+        "processsingleton",
+        "user data directory is already in use",
+        "opening in existing browser session",
+        "profile is already in use by another instance of chromium",
+    )):
+        return True
+    return bool(profile_path is not None and "exitcode=0" in detail
+                and (Path(profile_path) / "lockfile").exists())
 
 
 def browser_channels(environ=None):

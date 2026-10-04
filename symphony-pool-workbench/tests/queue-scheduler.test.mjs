@@ -106,6 +106,119 @@ test("a pre-submission failure switches accounts without falsifying the credit b
   }
 });
 
+test("login occupancy skips accounts, preserves their quota, and resumes the original job", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "queue-login-busy-"));
+  const store = createStore(path.join(root, "test.sqlite"));
+  try {
+    for (const [id, balance] of [["high", 10], ["low", 5]]) {
+      store.ensureAccount({ id, label: id, loginType: "doubao", service: "doubao",
+        workerId: "pc", profilePath: path.join(root, id), status: "auth_required" });
+      store.saveVerification(id, { ok: true, loggedIn: true, modelsObserved: ["Seedance 2.0 Mini"],
+        remainingCredits: balance, totalCredits: 10, creditPageReady: true, createPageReady: true });
+    }
+    const job = store.createDraftJob({ idempotencyKey: "busy-login", enqueue: true,
+      accountId: null, mode: "image_to_video", model: "Seedance 2.0 Mini", durationSeconds: 5,
+      aspectRatio: "auto", prompt: "test", referenceAssets: [], priority: 50 });
+    assert.equal(store.claimNextQueuedJob({ unavailableAccountIds: ["high", "low"] }), null);
+    assert.equal(store.getJob(job.id).errorCode, "ACCOUNT_BROWSER_BUSY");
+    assert.equal(store.getAccount("high").status, "ready");
+    assert.equal(store.claimNextQueuedJob({ unavailableAccountIds: ["high"] }).account.id, "low");
+    const before = store.getAccount("low");
+    store.handleDispatchFailure(job.id, "low", "PROFILE_IN_USE", { beforeSubmission: true });
+    assert.deepEqual(store.getAccount("low"), before);
+    assert.equal(store.getJob(job.id).status, "queued");
+    const retry = store.claimNextQueuedJob();
+    assert.equal(retry.job.id, job.id);
+    assert.equal(retry.account.id, "high");
+    assert.equal(store.getAccount("high").creditsRemaining, 10);
+    assert.equal(store.listJobs().length, 1);
+    store.handleDispatchFailure(job.id, "high", "PROFILE_IN_USE", { beforeSubmission: true });
+    store.cancelJob(job.id);
+    const pinned = store.createDraftJob({ idempotencyKey: "busy-pinned-login", enqueue: true,
+      accountId: "high", mode: "image_to_video", model: "Seedance 2.0 Mini", durationSeconds: 5,
+      aspectRatio: "auto", prompt: "test", referenceAssets: [], priority: 50 });
+    assert.equal(store.claimNextQueuedJob().account.id, "high");
+    store.handleDispatchFailure(pinned.id, "high", "PROFILE_IN_USE", { beforeSubmission: true });
+    assert.equal(store.getJob(pinned.id).status, "queued");
+    assert.equal(store.getJob(pinned.id).requestedAccountId, "high");
+    assert.equal(store.claimNextQueuedJob().job.id, pinned.id);
+  } finally { store.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("server waits for login release and automatically executes without another verification", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "queue-login-release-"));
+  const workerPath = path.join(root, "worker.mjs");
+  fs.writeFileSync(workerPath, `import fs from 'node:fs';import path from 'node:path';
+    let input='';for await(const chunk of process.stdin)input+=chunk;
+    const job=JSON.parse(input);fs.mkdirSync(path.dirname(job.outputPath),{recursive:true});
+    fs.writeFileSync(job.outputPath,'test-result');
+    console.log(JSON.stringify({stage:'success',resultPath:job.outputPath}));`);
+  let loginOpen = true;
+  const app = createWorkbenchServer({ port: await freePort(), workspaceRoot: root,
+    databasePath: path.join(root, "test.sqlite"), generatedRoot: path.join(root, "generated"),
+    workerPath, pythonExecutable: process.execPath, schedulerIntervalMs: 25,
+    profileInUse: () => loginOpen, autoReverifyAfterQueuedJob: false });
+  try {
+    app.store.ensureAccount({ id: "login", label: "login", loginType: "doubao", service: "doubao",
+      workerId: "pc", profilePath: path.join(root, "profile"), status: "auth_required" });
+    app.store.saveVerification("login", { ok: true, loggedIn: true, modelsObserved: ["Seedance 2.0 Mini"],
+      remainingCredits: 10, totalCredits: 10, creditPageReady: true, createPageReady: true });
+    const job = app.store.createDraftJob({ idempotencyKey: "wait-login-release", enqueue: true,
+      mode: "image_to_video", model: "Seedance 2.0 Mini", durationSeconds: 5, prompt: "test",
+      referenceAssets: [], priority: 50 });
+    await app.listen();
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.equal(app.store.getJob(job.id).status, "queued");
+    assert.equal(app.store.getJob(job.id).errorCode, "ACCOUNT_BROWSER_BUSY");
+    assert.equal(app.store.getAccount("login").status, "ready");
+    loginOpen = false;
+    for (let i = 0; i < 100 && app.store.getJob(job.id).status !== "success"; i++) {
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    assert.equal(app.store.getJob(job.id).status, "success");
+    assert.equal(app.store.listJobs().length, 1);
+    assert.equal(app.store.listEvents().filter(event => event.eventType === "job.dispatched").length, 1);
+  } finally { await app.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("session expiry after submit preserves quota and never replays on a second account", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "queue-session-expired-"));
+  const workerPath = path.join(root, "worker.mjs");
+  fs.writeFileSync(workerPath, `for await (const chunk of process.stdin) {}
+    console.log(JSON.stringify({stage:'submitting'}));
+    console.log(JSON.stringify({stage:'error',code:'LOGIN_EXPIRED_DURING_SUBMISSION'}));`);
+  const app = createWorkbenchServer({ port: await freePort(), workspaceRoot: root,
+    databasePath: path.join(root, "test.sqlite"), generatedRoot: path.join(root, "generated"),
+    workerPath, pythonExecutable: process.execPath, schedulerIntervalMs: 25,
+    profileInUse: () => false });
+  try {
+    for (const [id, balance] of [["high", 10], ["low", 5]]) {
+      app.store.ensureAccount({ id, label: id, loginType: "doubao", service: "doubao",
+        workerId: "pc", profilePath: path.join(root, id), status: "auth_required" });
+      app.store.saveVerification(id, { ok: true, loggedIn: true, modelsObserved: ["Seedance 2.0 Mini"],
+        remainingCredits: balance, totalCredits: 10, creditPageReady: true, createPageReady: true });
+    }
+    const job = app.store.createDraftJob({ idempotencyKey: "session-expired", enqueue: true,
+      mode: "image_to_video", model: "Seedance 2.0 Mini", durationSeconds: 5,
+      prompt: "test", referenceAssets: [], priority: 50 });
+    await app.listen();
+    for (let i = 0; i < 100; i++) {
+      if (app.store.getJob(job.id).status === "reconciling" && !app.queueScheduler.runningCount) break;
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    app.queueScheduler.wake();
+    assert.equal(app.store.getJob(job.id).status, "reconciling");
+    assert.equal(app.store.getJob(job.id).errorCode, "LOGIN_EXPIRED_DURING_SUBMISSION");
+    assert.equal(app.store.getJob(job.id).accountId, "high");
+    assert.equal(app.store.getAccount("high").status, "auth_required");
+    assert.equal(app.store.getAccount("high").creditsRemaining, 10);
+    assert.equal(app.store.getAccount("high").quotaExhaustedDate, null);
+    assert.equal(app.store.getAccount("low").status, "ready");
+    assert.equal(app.store.listJobs().length, 1);
+    assert.equal(app.store.listEvents().filter(event => event.eventType === "job.dispatched").length, 1);
+  } finally { await app.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test("HTTP queue runs one job per account and serves both completed results", async () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "symphony-queue-http-"));
   const port = await freePort();
