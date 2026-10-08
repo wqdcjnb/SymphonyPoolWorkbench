@@ -32,10 +32,19 @@ def upload_chat_images(page, images):
             plus.wait_for(timeout=10000)
         if composer.locator('[data-testid="attachment-image-card"], [data-testid="attachment-video-card"]').count():
             raise RuntimeError('MULTIMODAL_ATTACHMENTS_MISMATCH')
-        plus.click(timeout=10000)
+        upload = page.get_by_text('上传文件或图片', exact=True)
+        # The visible home-page composer can precede React event binding. Retry
+        # opening its menu once, before choosing files or sending any message.
+        if not upload.is_visible():
+            plus.click(timeout=10000)
+            try:
+                upload.wait_for(state='visible', timeout=3000)
+            except PlaywrightTimeoutError:
+                plus.click(timeout=10000)
+                upload.wait_for(state='visible', timeout=10000)
         # Doubao's + opens a menu; Dola's + opens a chooser directly.
-        with page.expect_file_chooser(timeout=10000) as chooser:
-            page.get_by_text('上传文件或图片', exact=True).click(timeout=10000)
+        with page.expect_file_chooser(timeout=15000) as chooser:
+            upload.click(timeout=10000)
         chooser.value.set_files(images)
         wait_for_image_attachments(page, len(images))
     except PlaywrightTimeoutError as error:

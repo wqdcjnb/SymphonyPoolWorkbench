@@ -22,6 +22,81 @@ const originalReceipt = { version: 1, source: "doubao_authorized_original", wate
 const input = (id, count = 1) => ({ client_task_id: id, model: "Seedance 2.0 Mini", duration: 15,
   ratio: "9:16", count, prompt: "海边日落", negative_prompt: "不要文字和水印" });
 
+test('generation ETA reaches polling and webhooks; waiting and exceeded forecasts never end the task',async t=>{
+  const received=[];
+  const receiver=http.createServer(async(req,res)=>{
+    let body='';for await(const chunk of req)body+=chunk;received.push(JSON.parse(body));res.writeHead(204);res.end();
+  });
+  await new Promise(resolve=>receiver.listen(0,'127.0.0.1',resolve));
+  t.after(()=>new Promise(resolve=>receiver.close(resolve)));
+  const callback=`http://127.0.0.1:${receiver.address().port}/eta`;
+  const f=await fixture(t,{partnerApi:{allowLocalCallbacks:true,callbackUrls:[callback]}});
+  const db=f.app.store.database, start=Date.now()-3600_000;
+  for(const [index,seconds] of [180,240].entries()) {
+    const id='job-'+randomUUID();
+    await db.prepare(`INSERT INTO jobs(id,idempotency_key,mode,model,duration_seconds,aspect_ratio,prompt,priority,status,created_at,updated_at,completed_at)
+      VALUES(?,?,'image_to_video','Seedance 2.0 Mini',15,'9:16','sample',50,'success',?,?,?)`).run(id,id,start,start+seconds*1000,start+seconds*1000);
+    for(const [stage,time] of [['generating',start],['collecting',start+seconds*1000]]) {
+      await db.prepare('INSERT INTO events(id,job_id,event_type,message,created_at) VALUES(?,?,?,?,?)')
+        .run(randomUUID(),id,'job.'+stage,'sample',time);
+    }
+  }
+  const created=(await f.request('/v1/videos',{...input('generation-eta'),callback_url:callback})).body;
+  assert.equal(created.progress.generation_estimate.status,'unavailable');
+  await f.app.partnerApi.wake();
+  const task=await f.app.partnerApi.store.get(created.task_id), id=task.items[0].job_id;
+  await f.app.store.updateJob(id,{status:'submitted',remoteUrl:'https://www.doubao.com/chat/123'});
+  await f.app.store.updateJob(id,{status:'generating'});
+  const current=(await f.request('/v1/videos/'+task.id)).body;
+  const eta=current.progress.generation_estimate;
+  assert.equal(eta.status,'available');assert.equal(eta.source,'recent_history');assert.equal(eta.sample_count,2);
+  assert.equal(eta.estimated_total_seconds,240);assert.ok(eta.estimated_remaining_seconds>230);
+  assert.deepEqual(eta,current.results[0].progress.generation_estimate);
+  await f.app.partnerApi.deliver();
+  const event=received.find(e=>e.event==='video.task.progress'&&e.progress.phase==='generating');
+  assert.equal(event.progress.generation_estimate.estimated_total_seconds,240);
+  const count=received.length;
+  const again=(await f.request('/v1/videos/'+task.id)).body;
+  await f.app.partnerApi.deliver();
+  assert.equal(again.progress_sequence,current.progress_sequence);assert.equal(received.length,count);
+  await db.prepare("UPDATE events SET created_at=? WHERE job_id=? AND event_type='job.generating'").run(start,id);
+  await f.app.store.updateJob(id,{status:'reconciling',errorCode:'DOUBAO_GENERATION_TIMEOUT'});
+  const overdue=(await f.request('/v1/videos/'+task.id)).body;
+  assert.equal(overdue.status,'running');assert.equal(overdue.terminal,false);
+  assert.equal(overdue.progress.generation_estimate.status,'exceeded');
+  assert.equal(overdue.progress.generation_estimate.estimated_remaining_seconds,null);
+  await f.app.store.updateJob(id,{status:'reconciling',errorCode:'DOUBAO_HUMAN_VERIFICATION_REQUIRED'});
+  const paused=(await f.request('/v1/videos/'+task.id)).body;
+  assert.equal(paused.progress.generation_estimate.status,'unavailable');
+  assert.equal(paused.progress.generation_estimate.estimated_completion_at,null);
+  await f.finish(task.items[0]);await f.app.partnerApi.wake();
+  const done=(await f.request('/v1/videos/'+task.id)).body;
+  assert.equal(done.status,'succeeded');assert.equal(done.progress.generation_estimate.status,'not_applicable');
+});
+
+test('accepted generation query and coordinator both keep the original API task running without a timeout error',async t=>{
+  const f=await fixture(t);
+  const created=await f.request('/v1/videos',input('accepted-waiting'));
+  await f.app.partnerApi.wake();
+  const task=await f.app.partnerApi.store.get(created.body.task_id),id=task.items[0].job_id;
+  await f.app.store.updateJob(id,{status:'submitted',remoteUrl:'https://www.doubao.com/chat/123'});
+  await f.app.store.updateJob(id,{status:'generating'});
+  await f.app.store.updateJob(id,{status:'reconciling',errorCode:'DOUBAO_GENERATION_TIMEOUT'});
+  for(let n=0;n<3;n++) {
+    await f.app.partnerApi.wake();
+    const response=(await f.request('/v1/videos/'+task.id)).body;
+    assert.equal(response.task_id,task.id);assert.equal(response.client_task_id,'accepted-waiting');
+    assert.equal(response.status,'running');assert.equal(response.terminal,false);
+    assert.equal(response.results[0].status,'running');assert.equal(response.results[0].error,undefined);
+    assert.equal(response.results[0].progress.phase,'waiting_result');
+    assert.equal(response.results[0].recovery.mode,'automatic');
+    assert.equal(response.results[0].recovery.deadline_at,null);
+    assert.equal(response.results[0].video_url,undefined);
+    assert.equal((await f.app.partnerApi.store.get(task.id)).items[0].error_code,null);
+  }
+  assert.equal((await f.app.store.listJobs()).length,1);
+});
+
 test('API reads current execution progress without waiting for the coordinator interval',async t=>{
   const f=await fixture(t);
   const created=await f.request('/v1/videos',input('live-progress'));
@@ -45,6 +120,75 @@ test('API reads current execution progress without waiting for the coordinator i
   const response=(await f.request('/v1/videos/'+task.id)).body;
   assert.equal(response.results[0].progress.platform_status,'completed');
   assert.equal(response.results[0].progress.delivery_status,'blocked');
+});
+
+test('task-level progress exposes every execution phase and reason with a stable monotonic sequence',async t=>{
+  const f=await fixture(t);
+  const created=(await f.request('/v1/videos',input('all-progress'))).body;
+  await f.app.partnerApi.wake();
+  const saved=await f.app.partnerApi.store.get(created.task_id),id=saved.items[0].job_id;
+  let sequence=created.progress_sequence;
+  for(const [status,errorCode,phase] of [
+    ['queued','ACCOUNTS_NOT_READY','queued'],['leased',null,'starting'],
+    ['submitting',null,'submitting'],['submitted',null,'awaiting_platform'],['generating',null,'generating'],
+    ['reconciling','DOUBAO_HUMAN_VERIFICATION_REQUIRED','awaiting_verification'],
+    ['reconciling','LOGIN_REQUIRED','awaiting_login'],
+    ['reconciling','TASK_ORIGINAL_PAGE_LOST','original_conversation_missing'],
+    ['reconciling','PLATFORM_PARAMETERS_MISMATCH','parameter_mismatch'],
+    ['reconciling','DOUBAO_CONFIRMATION_REQUIRED','awaiting_confirmation'],
+    ['reconciling','DOUBAO_SUBMISSION_UNCONFIRMED','submission_unconfirmed'],
+    ['collecting',null,'downloading'],['reconciling','VIDEO_DURATION_MISMATCH','download_blocked']
+  ]) {
+    await f.app.store.updateJob(id,{status,errorCode});
+    const task=(await f.request('/v1/videos/'+saved.id)).body;
+    assert.equal(task.progress.phase,phase);assert.deepEqual(task.progress,task.results[0].progress);
+    assert.equal(task.progress.reason_code,errorCode);assert.equal(task.terminal,false);
+    assert.ok(task.progress_sequence>sequence);sequence=task.progress_sequence;
+    await f.app.partnerApi.wake();
+    assert.equal((await f.request('/v1/videos/'+saved.id)).body.progress_sequence,sequence);
+  }
+  await f.restart();
+  assert.equal((await f.request('/v1/videos/'+saved.id)).body.progress_sequence,sequence);
+  await f.app.store.updateJob(id,{status:'failed',errorCode:'VIDEO_DURATION_MISMATCH'});
+  await f.app.partnerApi.wake();
+  const final=(await f.request('/v1/videos/'+saved.id)).body;
+  assert.equal(final.progress.phase,'failed');assert.equal(final.terminal,true);
+  assert.equal((await f.app.store.listJobs()).length,1);
+});
+
+test('progress callbacks include queue, verification, resumed generation and completion without repeat polling notifications',async t=>{
+  const received=[];
+  const receiver=http.createServer(async(req,res)=>{
+    let raw='';for await(const chunk of req)raw+=chunk;received.push(JSON.parse(raw));res.writeHead(204);res.end();
+  });
+  await new Promise(resolve=>receiver.listen(0,'127.0.0.1',resolve));
+  t.after(()=>new Promise(resolve=>receiver.close(resolve)));
+  const callback=`http://127.0.0.1:${receiver.address().port}/progress`;
+  const f=await fixture(t,{partnerApi:{allowLocalCallbacks:true,callbackUrls:[callback]}});
+  const created=(await f.request('/v1/videos',{...input('progress-callback'),callback_url:callback})).body;
+  await f.app.partnerApi.wake();
+  const item=(await f.app.partnerApi.store.get(created.task_id)).items[0];
+  await f.app.partnerApi.deliver();
+  for(const [status,errorCode] of [['generating',null],['reconciling','DOUBAO_HUMAN_VERIFICATION_REQUIRED'],['generating',null]]){
+    await f.app.store.updateJob(item.job_id,{status,errorCode});
+    await f.app.partnerApi.wake();await f.app.partnerApi.deliver();
+    if(errorCode){
+      const length=received.length;await f.restart();await f.app.partnerApi.deliver();
+      assert.equal(received.length,length);
+    }
+  }
+  const before=received.length;
+  await f.request('/v1/videos/'+created.task_id);
+  await f.app.partnerApi.wake();await f.app.partnerApi.deliver();
+  assert.equal(received.length,before);
+  await f.finish(item);await f.app.partnerApi.wake();await f.app.partnerApi.deliver();
+  const updates=received.filter(e=>e.event==='video.task.progress');
+  assert.deepEqual(updates.map(e=>e.progress.phase),['queued','generating','awaiting_verification','generating','completed']);
+  assert.deepEqual(updates.map(e=>e.progress_sequence),[1,2,3,4,5]);
+  assert.equal(updates.at(-1).terminal,true);assert.equal(updates.at(-1).is_final,true);
+  assert.ok(updates.at(-1).results[0].video_url);
+  assert.ok(received.some(e=>e.event==='video.batch.completed'));
+  assert.equal((await f.app.store.listJobs()).length,1);
 });
 
 test('100 simultaneous requests persist, wait for accounts and survive restart without duplicate jobs', async t => {
@@ -704,6 +848,7 @@ test("webhook retries persist across restart with the same ID/body, HMAC, and no
   const received = [];
   const receiver = http.createServer(async (req, res) => {
     let raw = ""; for await (const chunk of req) raw += chunk;
+    if (JSON.parse(raw).event === 'video.task.progress') { res.writeHead(204);res.end();return; }
     received.push({ raw, headers: req.headers });
     res.writeHead(received.length === 1 ? 500 : 204); res.end();
   });
@@ -734,7 +879,7 @@ test("webhook retries persist across restart with the same ID/body, HMAC, and no
   assert.equal(received.length, 2);
   assert.equal(received[0].raw, received[1].raw);
   assert.equal(received[0].headers["x-webhook-id"], received[1].headers["x-webhook-id"]);
-  assert.equal((await f.app.partnerApi.store.deliverySummary(id))[0].state, "delivered");
+  assert.equal((await f.app.partnerApi.store.deliverySummary(id)).find(d=>d.event_id===event.event_id).state, "delivered");
   assert.equal((await f.app.store.listJobs()).length, 2);
 });
 
@@ -780,6 +925,10 @@ test("accepted text task executes through the shared browser queue and finishes 
     workerId: "pc", profilePath: path.join(f.root, "profile"), status: "auth_required" }));
   (await f.app.store.saveVerification("browser", { ok: true, loggedIn: true, modelsObserved: ["Seedance 2.0 Mini"],
     remainingCredits: 9, totalCredits: 10, creditPageReady: true, createPageReady: true }));
+  fs.mkdirSync(path.join(f.root,'profile-2'));
+  await f.app.store.ensureAccount({id:'browser-2',label:'Browser 2',loginType:'doubao',service:'doubao',
+    workerId:'pc',profilePath:path.join(f.root,'profile-2')});
+  await f.app.store.saveVerification('browser-2',{ok:true,loggedIn:true,modelsObserved:['Seedance 2.0 Mini']});
   const accepted = await f.request("/v1/videos", input("real-queue", 3));
   let task;
   const deadline = Date.now() + 10_000;
@@ -789,5 +938,7 @@ test("accepted text task executes through the shared browser queue and finishes 
   } while (!task.finished_at && Date.now() < deadline);
   assert.equal(task.state, "succeeded");
   assert.equal(task.items.length, 3);
+  const jobs=await f.app.store.listJobs();
+  assert.ok(['browser','browser-2'].every(id=>jobs.filter(j=>j.accountId===id).length<=2));
   assert.equal((await f.app.partnerApi.store.deliverySummary(task.id)).length, 2);
 });

@@ -97,22 +97,6 @@ class DesktopRoutesTests(unittest.TestCase):
             (self.root / "routes" / f"{a['token']}.json").write_text(content)
             self.assertIsNone(routes.DesktopRoutes(self.root).lookup(a["token"]))
 
-    def test_mimic_supervisor_routes_only_its_own_xpra_desktop(self):
-        session = self.session("mimic-account", 3)
-        session["browserProvider"] = "multilogin"
-        browser_pid = session["browser"]["pid"]
-        args = ["python", "open-browser-profile.py", "--browser", "--profile", session["profile"],
-                "--account-id", session["accountId"]]
-        (self.proc / str(browser_pid) / "cmdline").write_bytes(
-            b"\0".join(os.fsencode(arg) for arg in args) + b"\0")
-        routes.write_session(self.root / "routes" / f"{session['token']}.json", session)
-        self.assertTrue(routes.valid_session(session, self.proc))
-        changed = deepcopy(session)
-        changed["accountId"] = "another-account"
-        self.assertFalse(routes.valid_session(changed, self.proc))
-        (self.proc / str(browser_pid) / "stat").unlink()
-        self.assertFalse(routes.valid_session(session, self.proc))
-
 
 if __name__ == "__main__":
     unittest.main()

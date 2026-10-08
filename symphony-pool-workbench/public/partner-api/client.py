@@ -39,7 +39,7 @@ def retryable(error):
 def safe_task(task):
     return {key: task[key] for key in ('task_id', 'client_task_id', 'status', 'terminal', 'poll_after_seconds',
             'completed_count', 'succeeded_count', 'failed_count', 'cancelled_count', 'wait_expired',
-            'retrying', 'delivery_pending') if key in task}
+            'retrying', 'delivery_pending', 'progress', 'progress_sequence') if key in task}
 
 
 class Client:

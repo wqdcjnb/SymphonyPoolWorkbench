@@ -51,6 +51,11 @@ def authenticated(page):
 
 def state(page):
     if challenge(page):
+        # Grid challenges are auto-solved (throttled inside the solver); the
+        # operator flow below remains the fallback for anything unsolved.
+        from doubao_grid_captcha import solve_doubao_grid_captcha
+        solve_doubao_grid_captcha(page)
+    if challenge(page):
         return {'ok': False, 'smsState': 'challenge', 'reason': 'LOGIN_CHALLENGE_REQUIRED'}
     if authenticated(page):
         return {'ok': True, 'authenticated': True}

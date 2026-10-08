@@ -10,7 +10,8 @@ import unittest
 from unittest.mock import Mock, MagicMock, patch
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-from doubao_export import ERROR, export_original, save_original, select_original, workspace_original
+from doubao_export import (ERROR, NOT_IN_LIBRARY, conversation_original, export_original,
+                           save_original, select_original, workspace_original)
 
 
 class OriginalExportTests(unittest.TestCase):
@@ -28,6 +29,13 @@ class OriginalExportTests(unittest.TestCase):
     def test_uses_original_stream_instead_of_watermarked_download(self):
         self.assertEqual(select_original(self.payload)["url"], self.original_url)
 
+    def test_explicit_unwatermarked_marker_is_an_original_not_a_watermark(self):
+        for marker in ('unwatermarked', 'no_watermark'):
+            url = self.original_url + '&lr=' + marker
+            self.model['video_list']['video_1']['main_url'] = base64.b64encode(url.encode()).decode()
+            self.payload['data']['download_video']['test-video']['video_model'] = self.model
+            self.assertEqual(select_original(self.payload)['url'], url)
+
     def test_requires_positive_platform_authorization(self):
         for flag in (False, None, 1, "true"):
             self.payload["data"]["without_watermark"] = flag
@@ -35,7 +43,8 @@ class OriginalExportTests(unittest.TestCase):
 
     def test_watermarked_stream_is_rejected_even_when_platform_flag_is_true(self):
         for query in ('lr=video_gen_watermark_dyn', 'logo_type=video_gen_watermark_dyn',
-                      'lr=video_gen_watermark', 'lr=video_gen_watermark%5Fdyn'):
+                      'lr=video_gen_watermark', 'lr=video_gen_watermark%5Fdyn',
+                      'lr=unwatermarked_watermark', 'logo_type=no_watermark_watermark'):
             self.model['video_list']['video_1']['main_url'] = base64.b64encode(
                 ('https://v26-vdl.doubao.com/result.mp4?' + query).encode()).decode()
             self.payload['data']['download_video']['test-video']['video_model'] = self.model
@@ -244,6 +253,90 @@ class OriginalExportTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError,'DOUBAO_ORIGINAL_EXPORT_TIMEOUT'):
                 export_original(context,page,Path('unused.mp4'))
         page.get_by_test_id.assert_not_called()
+
+    def test_chat_result_missing_from_library_uses_same_video_authorized_export(self):
+        context, page = MagicMock(), MagicMock()
+        url = self.original_url + '&lr=unwatermarked'
+        self.model['video_list']['video_1']['main_url'] = base64.b64encode(url.encode()).decode()
+        self.payload['data']['download_video']['test-video']['video_model'] = self.model
+        page.evaluate.side_effect = [{'error': 'not_found'}, {'payload': self.payload}]
+        with tempfile.TemporaryDirectory() as root, patch('doubao_export.original_video_id', return_value='test-video'):
+            target = Path(root)/'result.mp4'
+            def download(context, actual_url, output, hosts):
+                self.assertEqual(actual_url, url)
+                output.write_bytes(self.media)
+            receipt = export_original(context, page, target, download)
+            self.assertEqual(target.read_bytes(), self.media)
+            self.assertTrue(receipt['watermark_free'])
+            self.assertEqual(receipt['source_checksum'], 'video_model_md5')
+            self.assertEqual(receipt['export_endpoint'], 'creativity/resource/get_without_watermark')
+            self.assertEqual(page.evaluate.call_args_list[-1].args[1], 'test-video')
+        page.get_by_test_id.assert_not_called()
+        context.new_cdp_session.assert_not_called()
+
+    def test_identity_and_api_errors_never_trigger_a_different_export_route(self):
+        for code, expected in [('identity', ERROR), ('timeout', 'DOUBAO_ORIGINAL_EXPORT_TIMEOUT'),
+                               ('export_failed', 'DOUBAO_ORIGINAL_EXPORT_FAILED')]:
+            page, download = MagicMock(), Mock()
+            page.evaluate.return_value = {'error': code}
+            with patch('doubao_export.original_video_id', return_value='test-video'):
+                with self.assertRaisesRegex(RuntimeError, expected):
+                    export_original(MagicMock(), page, Path('unused.mp4'), download)
+            self.assertEqual(page.evaluate.call_count, 1)
+            download.assert_not_called()
+
+    def test_chat_export_requires_permission_and_exact_result_identity(self):
+        for change in ('denied', 'other-video', 'ambiguous', 'preview'):
+            payload = copy.deepcopy(self.payload)
+            if change == 'denied':
+                payload['data']['without_watermark'] = False
+            elif change == 'other-video':
+                payload['data']['download_video'] = {'other-video': payload['data']['download_video']['test-video']}
+            elif change == 'ambiguous':
+                payload['data']['download_video']['other-video'] = payload['data']['download_video']['test-video']
+            else:
+                model = json.loads(payload['data']['download_video']['test-video']['video_model'])
+                model['video_list']['video_1']['main_url'] = base64.b64encode(
+                    (self.original_url + '&lr=video_gen_watermark_dyn').encode()).decode()
+                payload['data']['download_video']['test-video']['video_model'] = model
+            page = MagicMock()
+            page.evaluate.return_value = {'payload': payload}
+            with self.assertRaisesRegex(RuntimeError, ERROR):
+                conversation_original(page, 'test-video')
+
+    @unittest.skipUnless(os.environ.get('WORKBENCH_HEADLESS_EXPORT_TEST') == '1',
+                         'Set WORKBENCH_HEADLESS_EXPORT_TEST=1 for the export browser test')
+    def test_browser_fallback_reads_only_exact_original_and_never_submits_generation(self):
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            browser = p.chromium.launch(channel='chrome', headless=True, args=['--no-sandbox'])
+            try:
+                page = browser.new_page()
+                requests = []
+                def route(route):
+                    name = route.request.url.split('?')[0].rsplit('/', 1)[-1]
+                    if name == 'fixture':
+                        return route.fulfill(content_type='text/html', body='<p>fixture</p>')
+                    requests.append((name, route.request.post_data_json))
+                    if name == 'homepage':
+                        payload = {'code':0, 'data':{'children':[{'name':'我的创作','id':'root-node'}]}}
+                    elif name == 'node_info':
+                        payload = {'code':0, 'data':{'children':[], 'has_more':False}}
+                    elif name == 'get_without_watermark':
+                        payload = self.payload
+                    else:
+                        raise AssertionError(name)
+                    route.fulfill(json=payload)
+                page.route('https://www.doubao.com/**', route)
+                page.goto('https://www.doubao.com/fixture')
+                with tempfile.TemporaryDirectory() as root, patch('doubao_export.original_video_id', return_value='test-video'):
+                    target = Path(root)/'result.mp4'
+                    export_original(None, page, target, lambda c,u,p,h: p.write_bytes(self.media))
+                    self.assertEqual(target.read_bytes(), self.media)
+                self.assertEqual([row[0] for row in requests], ['homepage','node_info','get_without_watermark'])
+                self.assertEqual(requests[-1][1], {'uri':[], 'vid':['test-video']})
+            finally:
+                browser.close()
 
     @unittest.skipUnless(os.environ.get('WORKBENCH_BROWSER_EXPORT_TEST') == '1',
                          'Set WORKBENCH_BROWSER_EXPORT_TEST=1 for the Chrome regression test')

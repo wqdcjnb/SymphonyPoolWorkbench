@@ -14,6 +14,25 @@ def message(identifier,role,text,video=None):
     return f'<div data-message-role="{role}"><div data-testid="message_content" data-message-id="{identifier}">{text}</div>{media}</div>'
 
 class TaskMessageTests(unittest.TestCase):
+    def test_moved_original_upload_placeholder_does_not_hide_generation_or_quota_reply(self):
+        from doubao_parameters import chat_confirmation_text
+        job={'id':'chat-image','profilePath':'unused','remoteMessageId':'101','prompt':'family scene',
+             'model':'Seedance 2.0 Fast','aspectRatio':'9:16','durationSeconds':15,'referenceAssets':['a']*5}
+        rows=[{'id':'101','role':'user','text':'family scene'},
+              {'id':'102','role':'assistant','text':'视频生成参数确认'},
+              {'id':'','localId':'original-upload','role':'user','text':'','images':5},
+              {'id':'103','role':'user','text':chat_confirmation_text(job)},
+              {'id':'104','role':'assistant','text':'今日视频生成免费次数用完了'}]
+        page=MagicMock();page.evaluate.return_value={'accepted':1,'originalMessages':2,'messages':1,
+            'images':5,'textPresent':True,'attachmentMessageIds':['original-upload']}
+        with patch('task_messages.read_state',return_value={}):
+            self.assertEqual([r['id'] for r in scoped_rows(page,job,'doubao',rows)],['101','102','103','104'])
+            for changed in [dict(rows[2],localId='new-upload'),dict(rows[2],id='105')]:
+                actual=scoped_rows(page,job,'doubao',[*rows[:2],changed,*rows[3:]])
+                self.assertEqual([r['id'] for r in actual],['101','102'])
+            self.assertEqual([r['id'] for r in scoped_rows(page,job,'doubao',
+                [rows[0],dict(rows[2],localId='new-upload'),*rows[3:]])],['101'])
+
     def test_joint_upload_placeholder_does_not_hide_the_reply_but_real_messages_still_bound_it(self):
         job={'id':'native-image','profilePath':'unused','remoteMessageId':'101','prompt':'a blue cube',
              'aspectRatio':'9:16','durationSeconds':15,'referenceAssets':['image.png']}

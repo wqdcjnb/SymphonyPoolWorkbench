@@ -23,13 +23,26 @@ const taskRequest = object({ client_task_id: clientId,
   callback_url: str("预登记的完整 HTTPS 回调地址；省略使用服务端默认值，空字符串关闭该任务回调", { maxLength: 2048 }),
 }, ["client_task_id", "model", "duration", "ratio", "prompt"]);
 const schemas = {
+  GenerationEstimate: object({
+    status:str('available 有估算；exceeded 已超过估算但任务继续；unavailable 当前无法预计；not_applicable 已结束生成',{enum:['available','exceeded','unavailable','not_applicable']}),
+    source:{type:['string','null'],enum:['recent_history',null],description:'recent_history 为工作台历史耗时估算，不是平台承诺时间'},
+    scope:str('仅当前这条视频的平台生成阶段，不含排队、人工验证、下载和后处理',{const:'platform_generation'}),
+    sample_count:integer('参与估算的近期同模型、同时长成功任务数；至少 2 条，最多 20 条',{minimum:0,maximum:20}),
+    estimated_total_seconds:{type:['integer','null'],minimum:0,description:'预计生成总耗时，秒；历史 P80 向上取整到 30 秒'},
+    estimated_remaining_seconds:{type:['integer','null'],minimum:0,description:'查询时预计剩余秒数；无法预计或已超过估算时为 null，不能作为超时或失败依据'},
+    estimated_completion_at:{...nullableDate,description:'预计平台生成完成时间，UTC；exceeded 时保留已超过的估算时间，尚不表示视频可下载'},
+    started_at:{...nullableDate,description:'工作台首次观察到平台开始生成的时间'},
+    calculated_at:{type:'string',format:'date-time',description:'本次倒计时计算时间；轮询更新，不会每秒触发回调'},
+  }),
   Progress: object({
-    phase: str('具体执行阶段；界面展示以此字段和 label 为准', {enum:['draft','queued','starting','submitting','awaiting_platform','generating','downloading','processing','download_blocked','awaiting_verification','awaiting_login','awaiting_confirmation','submission_unconfirmed','parameter_mismatch','reconciling','needs_review','completed','failed','cancelled']}),
+    phase: str('具体执行阶段；界面展示以此字段和 label 为准', {enum:['draft','queued','starting','submitting','awaiting_platform','generating','waiting_result','downloading','processing','download_blocked','awaiting_verification','awaiting_login','awaiting_confirmation','submission_unconfirmed','original_conversation_missing','parameter_mismatch','reconciling','needs_review','cancelling','completed','partially_completed','failed','cancelled']}),
     label: str('阶段中文名称'),description: str('当前阶段及阻塞原因'),
     action: str('服务方处理方式；调用方继续查询原 task_id',{enum:['none','verify','resume','recollect','inspect']}),
+    reason_code: {type:['string','null'],description:'当前等待或异常的机器可读原因；null 表示没有异常。排队或待验证不代表失败'},
     platform_status: str('最近确认的平台状态，不代表交付完成',{enum:['not_submitted','unknown','generating','completed','failed']}),
     delivery_status: str('文件交付状态',{enum:['pending','downloading','processing','blocked','available']}),
     updated_at: nullableDate,last_observed_at: nullableDate,
+    generation_estimate:ref('GenerationEstimate'),
   }),
   TaskRequest: taskRequest,
   Error: object({ error: object({ code: str("机器可读错误码", { enum: Object.keys(ERRORS) }), message: str("错误说明") }) }),
@@ -42,7 +55,7 @@ const schemas = {
     delivery_mode: taskRequest.properties.delivery_mode,
     postprocessed: { type: 'boolean', description: 'true 为局部修补并重新编码的版本' },
     processing: { type: 'object', additionalProperties: true, description: '修补方法、规则版本、矩形区域与画质提示' },
-    watermark_free: { type: ["boolean", "null"], description: "官方无水印原片为 true；修补版为 null，不宣称是官方无水印原片或经过逐帧无水印识别" },
+    watermark_free: { type: ["boolean", "null"], description: "官方无水印原片校验通过为 true；Dola 修补成品为 null，同时 postprocessed:true。null 本身不表示带水印或失败，应结合 delivery_mode、status 和 video_url 判断结果" },
     expires_at: nullableDate, retained_until: nullableDate,
     size_bytes: integer("交付 MP4 字节数", { minimum: 1 }), sha256: str("交付 MP4 SHA-256 十六进制摘要", { pattern: "^[a-f0-9]{64}$" }),
     error: object({ code: str("结果错误码；DOLA_HUMAN_VERIFICATION_REQUIRED 为暂停等待服务方操作，非失败终态", { enum: ["GENERATION_FAILED", "RESULT_MISSING", "RESULT_EXPIRED", "WATERMARK_FREE_RESULT_REQUIRED", "WATERMARK_REPAIR_FAILED", "WATERMARK_REPAIR_UNSUPPORTED_LAYOUT", "DOLA_HUMAN_VERIFICATION_REQUIRED"] }), message: str("错误说明") }),
@@ -52,6 +65,7 @@ const schemas = {
     attempts: { type: "integer", minimum: 0 }, last_http_status: { type: ["integer", "null"] },
     last_error: { type: ["string", "null"], enum: [null, "CALLBACK_HTTP_ERROR", "CALLBACK_UNREACHABLE", "DELIVERY_EXPIRED"] } }),
   Task: object({ task_id: taskId, client_task_id: clientId, status: taskStatus,
+    progress: ref('Progress'),progress_sequence: integer('状态或估算变化时递增；倒计时自然减少不递增。忽略旧版本回调，同版本轮询仍可刷新倒计时',{minimum:1}),
     terminal: {type:'boolean',description:'只有 true 才是任务终态；HTTP 超时、查询失败和 reconciling 不表示生成失败'},
     poll_after_seconds: integer('建议查询间隔秒数，默认 60；终态为 0'),
     status_url: str('原任务查询地址',{format:'uri'}),
@@ -64,17 +78,23 @@ const schemas = {
   }, ["task_id", "client_task_id", "status", "model", "duration", "ratio", "count", ...Object.keys(counters),
     "created_at", "updated_at", "finished_at", "results", "webhooks"]),
   Webhook: object({ event_id: str("通知唯一 ID，作为接收方去重键"),
-    event: str("批次结束，或取消请求最终结束", { enum: ["video.batch.completed", "video.task.finished"] }),
+    event: str("进度变化、批次结束、取消请求最终结束", { enum: ["video.task.progress", "video.batch.completed", "video.task.finished"] }),
     task_id: taskId, client_task_id: clientId, batch_index: { type: ["integer", "null"], minimum: 1 },
     is_final: { type: "boolean" }, status: taskStatus, count: taskRequest.properties.count, ...counters,
-    occurred_at: { type: "string", format: "date-time" }, results: { type: "array", maxItems: 2, items: ref("Result") } }),
+    occurred_at: { type: "string", format: "date-time" }, results: { type: "array", maxItems: 100, items: ref("Result"),description:'进度事件包含全部条目的当前阶段；批次完成事件最多 2 条' } }),
   Models: object({ api_version: { type: "string", const: "v1" },
     models: { type: "array", items: object({ model: str("请求使用的名称"), version: str("平台界面版本标签，不代表内部构建版本"),
       durations: { type: "array", items: { type: "integer" } }, ratios: { type: "array", items: { type: "string" } }, max_images: { type: "integer" },
-      daily_credits: integer('每账号每日积分', { const: 10 }), credits_per_video: integer('每条视频积分消耗', { enum: [2, 4] }),
+      daily_credits: integer('旧积分预算，仅兼容保留；不能据此计算生成次数', { const: 10, deprecated: true }),
+      credits_per_video: integer('旧积分权重，仅兼容保留', { enum: [2, 4], deprecated: true }),
+      daily_free_videos_per_account: integer('当前每账号每日免费生成调度上限，测试生成也计入；平台额度用尽时提前停止', { const: 2 }),
+      quota_unit: str('额度单位', { const: 'video' }), quota_timezone: str('工作台日计数时区', { const: 'Asia/Shanghai' }),
+      legacy_credits_deprecated: { type:'boolean', const:true },
       delivery_modes: { type: 'array', items: taskRequest.properties.delivery_mode }, note: str('模型限制说明') }, ['model','version','durations','ratios','max_images']), example: MODELS },
     limits: { type: "object", additionalProperties: true, description: "数量、上传大小、提示词、链接和文件保留期限制" } }),
 };
+// Progress events carry a full task snapshot, plus the usual webhook envelope.
+schemas.Webhook.properties = {...schemas.Task.properties,...schemas.Webhook.properties};
 const content = (schema) => ({ "application/json": { schema } });
 const failures = Object.fromEntries([...new Set(Object.values(ERRORS).map(([status]) => status))].map((status) => [status, {
   description: Object.entries(ERRORS).filter(([, value]) => value[0] === status).map(([code, [, message]]) => `${code}: ${message}`).join("；"),
@@ -87,8 +107,8 @@ const resultParams = [param, { name: "index", in: "path", required: true, schema
 const resultSecurity = [{ bearerAuth: [] }, { downloadSignature: [] }];
 const example = { client_task_id: "order_20261004_0001", model: "Dreamina Seedance 2.5", delivery_mode: 'watermark_repair', duration: 30, ratio: "9:16", count: 1,
   prompt: "海边日落，镜头缓慢向前推进，保持主体外观一致", negative_prompt: "不要文字、水印、画面闪烁和肢体变形", callback_url: "" };
-const doc = { openapi: "3.1.0", info: { title: "Symphony 号池视频生成 API", version: "1.5.2",
-  description: "共享 Bearer Key；异步任务；每批最多 2 条。Dola 须选择 watermark_repair，修补并重新编码后交付；角落可能模糊，不是官方无水印原片。其他模型仍使用原片校验。" },
+const doc = { openapi: "3.1.0", info: { title: "Symphony 号池视频生成 API", version: "1.7.2",
+  description: "共享 Bearer Key；异步任务；每批最多 2 条。豆包与 Dola 均交付无水印成品。豆包使用 official_original；Dola 使用 watermark_repair，完成水印处理和校验后返回下载地址。交付类型按响应字段核对。" },
   servers: [{ url: "https://47.84.3.74/v1", description: "云端 HTTPS 接口；需要专用 Bearer Key" }],
   security: [{ bearerAuth: [] }], paths: {
     "/models": { get: { operationId: "listModels", summary: "模型名称、版本标签与限制",
@@ -120,7 +140,7 @@ const doc = { openapi: "3.1.0", info: { title: "Symphony 号池视频生成 API"
     },
     "/openapi.json": { get: { operationId: "getOpenApi", summary: "获取本接口规范", responses: responses({
       200: { description: "OpenAPI 3.1 JSON，servers 使用当前配置地址", content: content({ type: "object" }) } }) } },
-  }, webhooks: { videoResults: { post: { summary: "批次结果或取消完成通知",
+  }, webhooks: { videoResults: { post: { summary: "全阶段进度变化、批次结果或取消完成通知",
     description: "HTTPS POST 至预登记 callback_url。按 event_id 去重；验签 timestamp + '.' + 原始请求体。签名重试更新、事件 ID 和请求体不变。最长重试 24 小时；不能依赖到达顺序。",
     security: [], parameters: [
       { name: "X-Webhook-Id", in: "header", required: true, schema: { type: "string" } },

@@ -1,6 +1,6 @@
 import { state, statusLabel, modeLabel, jobStatusLabel, supportedModels, supportedDurationsForModel, supportedImageLimits, $, escapeHtml, formatNumber, formatTime, readableError, api, toast } from "./shared.js";
 import { jobProgress } from './job-progress.js';
-import { DAILY_CREDITS, VIDEO_RATIOS, videoModel } from './video-policy.js';
+import { DAILY_FREE_VIDEOS, VIDEO_RATIOS, videoModel } from './video-policy.js';
 
 let selectedJobPage = 1;
 let jobPageRequestId = 0;
@@ -29,7 +29,7 @@ function syncDurationOptions() {
 
 function renderDeliveryNotice() {
   const spec = videoModel($("#jobModel").value);
-  if (spec) $("#jobCreditNotice").textContent = `每个账号每日 ${DAILY_CREDITS} 积分，${spec.duration} 秒视频每条消耗 ${spec.credits} 积分。`;
+  if (spec) $("#jobCreditNotice").textContent = `每个账号每日最多 ${DAILY_FREE_VIDEOS} 次免费生成；每条任务占用 1 次，测试生成也计入。`;
   $("#jobReferencePicker").hidden = spec?.maxImages === 0;
 }
 
@@ -170,8 +170,8 @@ function renderJobs() {
       <div class="job-meta"><span>${escapeHtml(modeLabel[job.mode] || job.mode)}</span><span>${escapeHtml(job.model === "auto" ? "自动选择模型" : job.model)}</span><span>${job.durationSeconds}s</span><span>${escapeHtml(job.aspectRatio === "auto" ? "比例自动" : job.aspectRatio || "比例自动")}</span><span>${job.mode === "image_to_video" && !job.referenceAssets.length ? "纯文字" : `${job.referenceAssets.length} 张参考图`}</span>${job.referenceVideo ? "<span>1 条参考视频</span>" : ""}<span>${escapeHtml(formatTime(job.updatedAt))}</span></div>
       ${job.batchSize > 1 ? `<p class="field-note">批次 ${escapeHtml(job.batchIndex)}/${escapeHtml(job.batchSize)}</p>` : job.status === "draft" && job.concurrency > 1 ? `<p class="field-note">并发 ${escapeHtml(job.concurrency)} 条</p>` : ""}
       <p class="field-note">${escapeHtml(progress.description)}${job.nextReconcileAt ? ` 下次核对：${escapeHtml(formatTime(job.nextReconcileAt))}。` : ''}</p>
-      ${job.errorCode ? `<p class="${job.status === "queued" ? "muted" : "account-error"}">${escapeHtml(readableError(job.errorCode))}</p>` : ""}
-      ${job.collectOnly && !['success','failed','cancelled'].includes(job.status) ? `<p class="field-note">仅处理原任务结果 · 已自动核对 ${job.reconcileAttempts || 0} 次</p>` : ''}
+      ${job.errorCode && progress.phase !== 'waiting_result' ? `<p class="${job.status === "queued" ? "muted" : "account-error"}">${escapeHtml(readableError(job.errorCode))}</p>` : ""}
+      ${job.collectOnly && !['success','failed','cancelled'].includes(job.status) ? `<p class="field-note">${progress.phase === 'waiting_result' ? '后台持续核对原任务' : '仅处理原任务结果'} · 已自动核对 ${job.reconcileAttempts || 0} 次</p>` : ''}
       ${job.status === "success" ? `<video class="job-video-preview" controls playsinline preload="none" aria-label="生成视频预览" src="/api/jobs/${encodeURIComponent(job.id)}/result?preview=1"></video>` : ""}
       <div class="job-actions">
         ${job.status === "draft" && job.mode === "image_to_video" ? `<button class="button ghost small" data-action="edit-job" data-job="${escapeHtml(job.id)}">编辑任务</button><button class="button primary small" data-action="start-job" data-job="${escapeHtml(job.id)}">开始生成</button><button class="text-button danger" data-action="cancel-job" data-job="${escapeHtml(job.id)}">取消任务</button>` : ""}

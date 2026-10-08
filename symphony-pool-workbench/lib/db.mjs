@@ -8,7 +8,7 @@ import { resolveVideoTarget, videoTargetBlocker, VIDEO_MODELS } from "./job-rout
 import { creditDay, withDailyCredits, videoCreditCost } from "./daily-credits.mjs";
 import { requiresHuman, loginErrors, challengeErrors, executionFaults } from './account-quality.mjs';
 import { collectionUrl, reconciliationPlan } from './long-task.mjs';
-import { INFRA_ERRORS } from './infra-errors.mjs';
+import { isPlatformResultPending } from '../public/js/job-progress.js';
 
 const ACCOUNT_STATUSES = new Set([
   "provisioning",
@@ -85,8 +85,10 @@ function asEvent(row) {
   };
 }
 
-export async function createStore(databasePath) {
-  const db = await openDatabase(databasePath);
+export async function createStore(databasePath, { database = null } = {}) {
+  // A live update can reuse the existing adapter so pool reservations and job
+  // transactions keep the same transaction context without restarting workers.
+  const db = database || await openDatabase(databasePath);
   const initialize = async () => {
   (await db.exec(`
     PRAGMA journal_mode = WAL;
@@ -250,6 +252,11 @@ export async function createStore(databasePath) {
   }
 
   await db.exec("CREATE INDEX IF NOT EXISTS jobs_credit_idx ON jobs(credit_date,account_id)");
+  await db.exec(`CREATE TABLE IF NOT EXISTS account_external_videos (
+    account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    video_id TEXT NOT NULL, quota_date TEXT NOT NULL, created_at INTEGER NOT NULL,
+    PRIMARY KEY(account_id,video_id))`);
+  await db.exec('CREATE INDEX IF NOT EXISTS external_videos_day_idx ON account_external_videos(quota_date,account_id)');
   // Backfill known-cost submissions, including existing 2.5 / 30-second videos.
   for (const job of await db.prepare(`SELECT id,model,duration_seconds,submitted_at,created_at FROM jobs
     WHERE account_id IS NOT NULL AND credit_state IS NULL AND (submitted_at IS NOT NULL
@@ -268,7 +275,7 @@ export async function createStore(databasePath) {
   await db.exec("UPDATE jobs SET credit_cost=0,credit_date=NULL,credit_state='released' WHERE credit_state='reserved' AND status IN ('failed','cancelled')");
   };
   try { if (db.kind === 'postgres') await db.transaction(initialize); else await initialize(); }
-  catch (error) { await db.close(); throw error; }
+  catch (error) { if (!database) await db.close(); throw error; }
 
   const jobSelect = `SELECT lease_token AS leaseToken, execution_worker AS executionWorker, collect_only AS collectOnly,
     remote_message_id AS remoteMessageId,
@@ -298,9 +305,17 @@ export async function createStore(databasePath) {
   const budgetAccounts = async (accounts) => {
     const now = Date.now();
     const rows = await db.prepare(`SELECT account_id AS accountId, SUM(credit_cost) AS used,
-      SUM(CASE WHEN credit_state='reserved' THEN credit_cost ELSE 0 END) AS reserved
+      SUM(CASE WHEN credit_state='reserved' THEN credit_cost ELSE 0 END) AS reserved,
+      SUM(CASE WHEN credit_state='reserved' THEN 1 ELSE 0 END) AS videoReserved,
+      SUM(CASE WHEN credit_state='charged' AND NOT (status='failed' AND result_path IS NULL
+        AND COALESCE(error_code,'') IN ('DOUBAO_SUBSCRIPTION_REQUIRED','DOUBAO_FREE_QUOTA_EXHAUSTED','DOLA_QUOTA_EXHAUSTED'))
+        THEN 1 ELSE 0 END) AS videoUsed
       FROM jobs WHERE credit_date=? AND credit_state IN ('reserved','charged') GROUP BY account_id`).all(creditDay(now));
     const usage = new Map(rows.map(row => [row.accountId, row]));
+    for (const row of await db.prepare(`SELECT account_id AS accountId,COUNT(*) AS externalVideos
+      FROM account_external_videos WHERE quota_date=? GROUP BY account_id`).all(creditDay(now))) {
+      usage.set(row.accountId,{...(usage.get(row.accountId)||{}),externalVideos:row.externalVideos});
+    }
     return accounts.map(account => withDailyCredits(account, usage.get(account?.id), now));
   };
   const reserveCredits = async (job, model) => {
@@ -449,6 +464,7 @@ export async function createStore(databasePath) {
         (await db.exec("PRAGMA defer_foreign_keys = ON"));
         (await db.prepare("UPDATE accounts SET id=?, label=?, profile_path=?, updated_at=? WHERE id=?")
           .run(newId, label, profilePath, Date.now(), oldId));
+        await db.prepare('UPDATE account_external_videos SET account_id=? WHERE account_id=?').run(newId,oldId);
         (await db.prepare("UPDATE jobs SET account_id=? WHERE account_id=?").run(newId, oldId));
         (await db.prepare("UPDATE jobs SET requested_account_id=? WHERE requested_account_id=?")
           .run(newId, oldId));
@@ -569,14 +585,6 @@ export async function createStore(databasePath) {
       const timestamp = Date.now();
       return (await transaction(async () => {
         const account = await this.getAccount(id);
-        const infrastructure=INFRA_ERRORS.has(errorCode);
-        if(infrastructure){
-          await db.prepare('UPDATE accounts SET status=?,last_error_code=?,updated_at=? WHERE id=?')
-            .run(account?.lastVerifiedAt?'ready':'auth_required',errorCode,timestamp,id);
-          await insertEvent({accountId:id,eventType:'account.infrastructure_waiting',
-            message:'浏览器或固定出口不可用，账号等待恢复',details:{errorCode}});
-          return;
-        }
         const quotaExhaustedToday = account?.quotaExhaustedDate === beijingDay(timestamp);
         (await db.prepare("UPDATE accounts SET status=?, health_score=0, last_error_code=?, updated_at=? WHERE id=?")
           .run(quotaExhaustedToday ? "cooling" : "error",
@@ -664,6 +672,28 @@ export async function createStore(databasePath) {
       });
     },
 
+    async recordExternalVideoGeneration(id, { videoId, createdAt }) {
+      if (typeof videoId !== 'string' || !/^[A-Za-z0-9_-]{8,160}$/.test(videoId)
+        || !Number.isSafeInteger(createdAt) || createdAt <= 0 || createdAt > Date.now() + 60_000) {
+        throw new Error('INVALID_EXTERNAL_VIDEO');
+      }
+      return transaction(async () => {
+        const account = await this.getAccount(id);
+        if (!account || !['doubao','dola'].includes(account.service)) throw new Error('ACCOUNT_NOT_FOUND');
+        const previous = await db.prepare('SELECT created_at FROM account_external_videos WHERE account_id=? AND video_id=?').get(id,videoId);
+        if (previous) {
+          if (previous.created_at !== createdAt) throw new Error('EXTERNAL_VIDEO_CONFLICT');
+          return account;
+        }
+        const day = creditDay(createdAt);
+        await db.prepare('INSERT INTO account_external_videos(account_id,video_id,quota_date,created_at) VALUES(?,?,?,?)')
+          .run(id,videoId,day,createdAt);
+        await insertEvent({accountId:id,eventType:'account.external_video_recorded',
+          message:'已将工作台任务外的生成计入账号当日次数',details:{videoId,day}});
+        return this.getAccount(id);
+      });
+    },
+
     async markAccountQuotaExhausted(id, errorCode = "DOUBAO_FREE_QUOTA_EXHAUSTED") {
       return (await transaction(async () => {
         const timestamp = Date.now();
@@ -695,7 +725,6 @@ export async function createStore(databasePath) {
         }
         const now = Date.now();
         const profileBusy = beforeSubmission && errorCode === "PROFILE_IN_USE";
-        const infrastructure = beforeSubmission && INFRA_ERRORS.has(errorCode);
         if (!job.collectOnly) await releaseCredits(id);
         if (quotaExhausted) {
           const account = await this.getAccount(accountId);
@@ -711,7 +740,7 @@ export async function createStore(databasePath) {
             details: { errorCode } }));
         } else if (requiresHuman(errorCode)) {
           (await this.markAccountLoginRequired(accountId, errorCode));
-        } else if (!profileBusy && !infrastructure) {
+        } else if (!profileBusy) {
           (await db.prepare(`UPDATE accounts SET status='degraded', health_score=25,
             last_error_code=?, updated_at=? WHERE id=?`)
             .run(errorCode, now, accountId));
@@ -719,14 +748,14 @@ export async function createStore(databasePath) {
             message: "提交前执行失败，账号等待重新验收", details: { errorCode } }));
         }
         await recordExecutionFault(accountId, id, errorCode);
-        const canRetry = job.queuedAt != null && (!job.requestedAccountId || profileBusy || infrastructure) && !job.cancelRequested;
+        const canRetry = job.queuedAt != null && (!job.requestedAccountId || profileBusy) && !job.cancelRequested;
         if (canRetry) {
           (await db.prepare(`UPDATE jobs SET account_id=NULL, model=requested_model, status='queued',
             remote_url=NULL, result_path=NULL, error_code=?, submitted_at=NULL,
             completed_at=NULL, updated_at=? WHERE id=?`)
-            .run(profileBusy ? "ACCOUNT_BROWSER_BUSY" : infrastructure ? errorCode : null, now, id));
-          (await insertEvent({ accountId, jobId: id, eventType: profileBusy ? "job.waiting_for_browser" : infrastructure ? "job.waiting_for_infrastructure" : "job.failover_queued",
-            message: profileBusy ? "账号浏览器暂被占用，释放后自动继续" : infrastructure ? "浏览器或固定出口不可用，任务等待恢复" : "已切换候选账号并重新排队",
+            .run(profileBusy ? "ACCOUNT_BROWSER_BUSY" : null, now, id));
+          (await insertEvent({ accountId, jobId: id, eventType: profileBusy ? "job.waiting_for_browser" : "job.failover_queued",
+            message: profileBusy ? "账号浏览器暂被占用，释放后自动继续" : "已切换候选账号并重新排队",
             details: { errorCode, quotaExhausted } }));
         } else {
           const finalStatus = job.cancelRequested ? "cancelled" : "failed";
@@ -787,8 +816,8 @@ export async function createStore(databasePath) {
         const job = await this.getJob(id);
         if (!job || job.status !== 'reconciling') return;
         const plan = job.accountId ? reconciliationPlan(job) : null;
-        await db.prepare('UPDATE jobs SET next_reconcile_at=?,reconcile_deadline_at=COALESCE(reconcile_deadline_at,?) WHERE id=?')
-          .run(plan?.next ?? null, plan?.deadline ?? null, id);
+        await db.prepare('UPDATE jobs SET next_reconcile_at=?,reconcile_deadline_at=? WHERE id=?')
+          .run(plan?.next ?? null, plan ? plan.deadline : job.reconcileDeadlineAt, id);
         if (plan && plan.next === null) {
           await db.prepare("UPDATE jobs SET error_code='RECONCILIATION_NEEDS_ATTENTION' WHERE id=?").run(id);
           await flagAttention(job.accountId, 'RECONCILIATION_NEEDS_ATTENTION');
@@ -814,7 +843,7 @@ export async function createStore(databasePath) {
         const pending = (await db.prepare(`${jobSelect} WHERE status='reconciling' AND next_reconcile_at<=?
           ORDER BY next_reconcile_at,created_at`).all(now)).map(asJob);
         for (const job of pending) {
-          if (job.reconcileDeadlineAt <= now) { await this.scheduleReconciliation(job.id); continue; }
+          if (job.reconcileDeadlineAt != null && job.reconcileDeadlineAt <= now) { await this.scheduleReconciliation(job.id); continue; }
           const account = await this.getAccount(job.accountId);
           if (!account || account.status !== 'ready' || account.needsAttention || unavailable.has(account.id)
             || !collectionUrl(job.remoteUrl, account.service)) continue;
@@ -1144,8 +1173,12 @@ export async function createStore(databasePath) {
           if(await db.prepare('SELECT 1 FROM jobs WHERE remote_url=? AND remote_message_id=? AND id<>?').get(remoteUrl,update.remoteMessageId,id))throw new Error('REMOTE_TASK_ALREADY_BOUND');
         }
         const now = Date.now();
+        if (update.status === 'reconciling' && isPlatformResultPending({...current,...update})) {
+          update = {...update,errorCode:'PLATFORM_RESULT_PENDING'};
+        }
         if (current.accountId && requiresHuman(update.errorCode)) await this.markAccountLoginRequired(current.accountId, update.errorCode);
-        if (['submitting','submitted','generating','collecting','success'].includes(update.status)) {
+        if (['submitting','submitted','generating','collecting','success'].includes(update.status)
+          && !(current.collectOnly && update.status === 'submitted' && ['generating','collecting'].includes(current.lastObservedStage))) {
           await db.prepare('UPDATE jobs SET last_observed_stage=?,last_observed_at=? WHERE id=?').run(update.status,now,id);
         }
         await recordExecutionFault(current.accountId, id, update.errorCode);
@@ -1181,7 +1214,7 @@ export async function createStore(databasePath) {
           message: ({ submitting: "正在向平台提交", submitted: "已提交到平台", generating: "平台正在生成",
             collecting: "正在保存结果", success: current.mode === "reference_to_video" ? "参考素材转视频已完成" : "视频生成已完成",
             failed: current.mode === "reference_to_video" ? "参考素材转视频执行失败" : "视频生成执行失败",
-            reconciling: "需检查平台任务状态" })[update.status] || "任务状态已更新",
+            reconciling: update.errorCode === 'PLATFORM_RESULT_PENDING' ? "等待平台结果，继续核对原任务" : "需检查平台任务状态" })[update.status] || "任务状态已更新",
           details: update.errorCode ? { errorCode: update.errorCode } : {},
         }));
         return (await this.getJob(id));
@@ -1218,9 +1251,11 @@ export async function createStore(databasePath) {
     async overview() {
       const visibleAccounts = (await this.listAccounts()).filter(account => ['doubao','dola'].includes(account.service));
       const accounts = { total: visibleAccounts.length,
-        ready: visibleAccounts.filter(account => account.status === 'ready' && !account.needsAttention).length,
+        ready: visibleAccounts.filter(account => account.status === 'ready' && !account.needsAttention && account.freeVideosRemaining > 0).length,
         authRequired: visibleAccounts.filter(account => account.status === 'auth_required').length,
         needsAttention: visibleAccounts.filter(account => account.needsAttention || ['provisioning','auth_required','degraded','error'].includes(account.status)).length,
+        availableFreeVideos: visibleAccounts.filter(account => account.status === 'ready' && !account.needsAttention)
+          .reduce((sum, account) => sum + account.freeVideosRemaining, 0),
         availableCredits: visibleAccounts.filter(account => account.status === 'ready')
           .reduce((sum, account) => sum + account.creditsRemaining, 0) };
       const jobs = (await db.prepare(`SELECT COUNT(*) AS total,
@@ -1234,6 +1269,7 @@ export async function createStore(databasePath) {
           authRequired: Number(accounts.authRequired || 0),
           needsAttention: Number(accounts.needsAttention || 0),
           availableCredits: Number(accounts.availableCredits || 0),
+          availableFreeVideos: Number(accounts.availableFreeVideos || 0),
         },
         jobs: {
           total: Number(jobs.total || 0),

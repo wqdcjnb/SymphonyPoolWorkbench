@@ -34,7 +34,6 @@ export function poolHttp({pool,store,profileRoot,workspaceRoot,pythonExecutable,
         await pool.recordGroupCheck(body.id,checked.ip||null,checked.ok?null:'EGRESS_CHECK_FAILED');result={ok:checked.ok};
       }
       else if(pathname==='/api/pool/bind'){await pool.bind(body.accountIds,body.groupId);result={ok:true};}
-      else if(pathname==='/api/pool/multilogin-profile'){await pool.bindMultiloginProfile(body.accountId,body.folderId,body.profileId);result={ok:true};}
       else if(pathname==='/api/pool/credential'){await pool.credential(body.accountId,body);result={ok:true};}
       else if(pathname==='/api/pool/identity')result=await pool.saveLoginIdentity(body.accountId,body);
       else if(pathname==='/api/pool/identities')result=await pool.saveLoginIdentities(body.csv?parsePhoneCsv(body.csv).map(r=>({...r,source:body.source})):body.rows);

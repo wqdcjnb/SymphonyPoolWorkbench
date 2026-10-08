@@ -5,6 +5,7 @@ import re
 from playwright.sync_api import sync_playwright
 from browser_runtime import persistent_context
 from dola_video import DOLA_LONG_MODEL, DOLA_IMAGE_LIMIT, open_composer, select_model
+from slider_captcha import captcha_visible, solve_dola_captcha
 
 
 def main():
@@ -20,7 +21,15 @@ def main():
             try:
                 page = context.new_page()
                 try:
-                    composer = open_composer(page)
+                    try:
+                        composer = open_composer(page)
+                    except Exception:
+                        # A slider challenge can gate the chat page during
+                        # verification. Solve it and retry once before giving up.
+                        if captcha_visible(page) and solve_dola_captcha(page):
+                            composer = open_composer(page)
+                        else:
+                            raise
                     result.update(loggedIn=True, stage='dola_capability')
                     select_model(page, composer, DOLA_LONG_MODEL)
                     upload = composer.locator('[data-testid="upload-file-input"]')

@@ -12,6 +12,47 @@ import { createWorkbenchServer } from '../server.mjs';
 import { Client } from '../docs/examples/partner-client.mjs';
 
 const taskId='task-550e8400-e29b-41d4-a716-446655440000';
+
+test('accepted original remains scheduled after an expired old deadline, across restart, without extra charge',async t=>{
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'pending-result-')),schema='pending_'+randomUUID().replaceAll('-','');
+  let source=path.join(root,'db.sqlite'),admin;
+  if(process.env.TEST_POSTGRES_URL){
+    admin=new pg.Client({connectionString:process.env.TEST_POSTGRES_URL});await admin.connect();await admin.query(`CREATE SCHEMA ${schema}`);
+    const url=new URL(process.env.TEST_POSTGRES_URL);url.searchParams.set('options',`-csearch_path=${schema}`);source=url.href;
+  }
+  let store=await createStore(source);
+  t.after(async()=>{await store.close();if(admin){await admin.query(`DROP SCHEMA ${schema} CASCADE`);await admin.end();}fs.rmSync(root,{recursive:true,force:true});});
+  await store.ensureAccount({id:'dola',label:'Dola',service:'dola',loginType:'dola',workerId:'qa',profilePath:path.join(root,'profile')});
+  await store.saveVerification('dola',{ok:true,loggedIn:true,modelsObserved:['Dreamina Seedance 2.5']});
+  const draft=await store.createDraftJob({idempotencyKey:'pending',accountId:'dola',mode:'image_to_video',
+    model:'Dreamina Seedance 2.5',durationSeconds:30,aspectRatio:'9:16',prompt:'test',referenceAssets:[],priority:50,enqueue:true});
+  await store.claimNextQueuedJob();
+  await store.updateJob(draft.id,{status:'submitted',remoteUrl:'https://www.dola.com/chat/123',remoteMessageId:'456'});
+  await store.updateJob(draft.id,{status:'generating'});
+  const before=await store.getJob(draft.id),accountBefore=await store.getAccount('dola');
+  await store.database.prepare('UPDATE jobs SET reconcile_deadline_at=1 WHERE id=?').run(draft.id);
+  await store.updateJob(draft.id,{status:'reconciling',errorCode:'DOLA_GENERATION_TIMEOUT'});
+  for(let index=0;index<3;index++) {
+    const pending=await store.getJob(draft.id);
+    assert.equal(pending.errorCode,'PLATFORM_RESULT_PENDING');assert.equal(pending.reconcileDeadlineAt,null);
+    assert.ok(pending.nextReconcileAt>Date.now());assert.equal(pending.progress.phase,'waiting_result');
+    await store.close();store=await createStore(source);await store.restoreReconciliation();
+    await store.database.prepare('UPDATE jobs SET next_reconcile_at=0 WHERE id=?').run(draft.id);
+    const recovered=await store.claimNextReconciliation();
+    assert.equal(recovered.job.id,draft.id);assert.equal(recovered.job.collectOnly,1);
+    await store.updateJob(draft.id,{status:'submitted'});
+    assert.equal((await store.getJob(draft.id)).progress.phase,'waiting_result');
+    await store.updateJob(draft.id,{status:'generating'});
+    await store.updateJob(draft.id,{status:'reconciling',errorCode:'PLATFORM_RESULT_PENDING'});
+  }
+  const after=await store.getJob(draft.id),accountAfter=await store.getAccount('dola');
+  for(const field of ['remoteUrl','remoteMessageId','submittedAt','creditCost','creditState','creditDate'])assert.equal(after[field],before[field]);
+  assert.equal((await store.listJobs()).length,1);assert.equal(accountAfter.needsAttention,false);
+  assert.equal(accountAfter.creditsRemaining,accountBefore.creditsRemaining);
+  assert.equal(accountAfter.reliabilityScore,accountBefore.reliabilityScore);
+  await store.updateJob(draft.id,{status:'success'});
+  assert.equal((await store.getJob(draft.id)).nextReconcileAt,null);
+});
 test('Node client watches beyond 20 minutes, retries network and rate limits, and waits through reconciliation',async()=>{
   let now=0,calls=0;const sleeps=[],progress=[];
   const client=new Client({key:'test-only',clock:()=>now,random:()=>0,sleep:async ms=>{sleeps.push(ms);now+=ms;},fetcher:async()=>{

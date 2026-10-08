@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import tempfile
 import zipfile
+from release_contract import validate_payload
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,11 +22,12 @@ FILES = (
         "prepare-public-v2.py", "init-v2-storage.py", "symphony-v2-backup.timer",
     )),
     *(f"{APP}/{name}" for name in (
-        "PARTNER_API.md", "package.json", "package-lock.json", "requirements.txt", "requirements-video.txt", ".env.example",
+        "PARTNER_API.md",
+        "package.json", "package-lock.json", "requirements.txt", "requirements-video.txt", ".env.example",
         ".gitignore", "server.mjs", "start-workbench.ps1", "stop-workbench.ps1",
     )),
     *(f"tools/{name}" for name in (
-        "build-release.py", "open-symphony-profile.ps1", "run-image-to-video.py",
+        "build-release.py", "release_contract.py", "open-symphony-profile.ps1", "run-image-to-video.py",
         "verify-doubao-profile.py", "verify-symphony-profile.py", "verify-dola-profile.py", "dola_video.py", "test_dola_video.py", "video_compat.py", "video_ratios.py", "test_video_compat.py",
         "test_verify_symphony_profile.py", "test_verification_launch.py",
         "browser_runtime.py", "open-browser-profile.py", "test_browser_runtime.py",
@@ -38,6 +40,8 @@ FILES = (
         "login_diagnostics.py", "test_login_diagnostics.py",
         "manual_login_browser.py", "test_manual_login_browser.py",
         "doubao_parameters.py", "test_doubao_parameters.py",
+        "doubao_chat.py", "test_doubao_chat.py",
+        "doubao_grid_captcha.py", "test_doubao_grid_captcha.py",
         "doubao_upload.py", "test_doubao_upload.py",
         "doubao_duration.py", "doubao_duration.js", "test_doubao_duration.py",
         "doubao_challenge.py", "inspect_doubao_task.py", "test_doubao_recovery.py",
@@ -119,6 +123,7 @@ def collect() -> dict[str, bytes]:
     for secret in ("PARTNER_API_KEY", "PARTNER_DOWNLOAD_SECRET", "PARTNER_WEBHOOK_SECRET"):
         if secret not in assignments or assignments[secret].strip().strip("\"'"):
             raise ValueError(f"Release template must leave {secret} empty")
+    validate_payload(payload)
     return payload
 
 

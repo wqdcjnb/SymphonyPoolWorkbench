@@ -15,7 +15,6 @@ import { createBrowserSessions } from "./lib/browser-sessions.mjs";
 import { createBrowserResidency } from "./lib/browser-residency.mjs";
 import { createDolaRecovery } from "./lib/dola-recovery.mjs";
 import { createLoginQueue } from "./lib/login-queue.mjs";
-import { EGRESS_ERRORS, MULTILOGIN_ERRORS, INFRA_ERRORS } from "./lib/infra-errors.mjs";
 import { poolHttp, privatePython } from "./lib/pool-http.mjs";
 import { createAccountPool } from "./lib/account-pool.mjs";
 import { createStore } from "./lib/db.mjs";
@@ -310,15 +309,12 @@ export async function createWorkbenchServer(options = {}) {
     enforceWorker: Boolean(options.workerId || process.env.WORKBENCH_WORKER_ID),
     capacity: maxConcurrentJobs, globalLimit: Number(process.env.WORKBENCH_GLOBAL_LIMIT || 100),
     keyFile: options.keyFile || process.env.WORKBENCH_KEY_FILE,
-    enforceGroups: options.enforceGroups ?? process.env.WORKBENCH_REQUIRE_GROUPS === "1",
-    requireProxyForNewAccounts: options.requireProxyForNewAccounts ?? process.env.WORKBENCH_REQUIRE_PROXY_FOR_NEW_ACCOUNTS === "1",
-    requireMimicForNewAccounts: options.requireMimicForNewAccounts ?? process.env.WORKBENCH_REQUIRE_MIMIC_FOR_NEW_ACCOUNTS === "1" });
+    enforceGroups: options.enforceGroups ?? process.env.WORKBENCH_REQUIRE_GROUPS === "1" });
   let poolStarted = false;
   let poolTimer, residencyTimer, closing=false;
   const sessions = createBrowserSessions({pool,runtime,workspaceRoot,desktopPort,
     keepAlive: options.keepBrowsersAlive ?? true,
-    enabled: !runtime.windows && (options.managedSessions ?? process.env.WORKBENCH_MANAGED_SESSIONS === "1"),
-    checkEgress: config => privatePython(pythonExecutable,path.join(workspaceRoot,'tools','check-egress.py'),config)});
+    enabled: !runtime.windows && (options.managedSessions ?? process.env.WORKBENCH_MANAGED_SESSIONS === "1")});
   const residency=createBrowserResidency({store,pool,sessions,locks:profileLaunchLocks,verificationLocks});
   const releaseViewer=async previous=>{
     if(!previous?.accountId)return;
@@ -454,15 +450,12 @@ export async function createWorkbenchServer(options = {}) {
       await updates;
       const current = (await store.getJob(job.id));
       if (current?.status !== "success") {
-        const sessionEgress=await sessions.consumeEgressFailure(account);
         const possiblySubmitted = Boolean(current?.collectOnly || current?.remoteUrl)
           || new Set(["submitting", "submitted", "generating", "collecting", "reconciling"]).has(current?.status);
         const quotaExhausted = workerError === "DOUBAO_FREE_QUOTA_EXHAUSTED" || workerError === "DOLA_QUOTA_EXHAUSTED";
-        const errorCode = sessionEgress || workerError || "WORKER_EXITED";
-        if (EGRESS_ERRORS.has(errorCode)) await pool.markAccountEgressFailed(account.id);
+        const errorCode = workerError || "WORKER_EXITED";
         if (job.queuedAt != null && (quotaExhausted || !possiblySubmitted)) {
           if (errorCode === "PROFILE_IN_USE") profileRetryAfter.set(account.id, Date.now() + 5_000);
-          if (MULTILOGIN_ERRORS.has(errorCode)) profileRetryAfter.set(account.id, Date.now() + 30_000);
           (await store.handleDispatchFailure(job.id, account.id, errorCode,
             { quotaExhausted, beforeSubmission: !possiblySubmitted, leaseToken: job.leaseToken }));
         } else {
@@ -471,19 +464,11 @@ export async function createWorkbenchServer(options = {}) {
           if (quotaExhausted) (await store.markAccountQuotaExhausted(account.id, workerError));
         }
       }
-    } catch (error) {
+    } catch {
       const current = (await store.getJob(job.id));
-      const sessionEgress=await sessions.consumeEgressFailure(account);
-      const infraCode=sessionEgress || (INFRA_ERRORS.has(error?.message)?error.message:null);
-      if(MULTILOGIN_ERRORS.has(infraCode))profileRetryAfter.set(account.id,Date.now()+30_000);
-      if(infraCode && current?.status==='leased' && !current.collectOnly && !current.remoteUrl){
-        await store.handleDispatchFailure(job.id,account.id,infraCode,
-          {beforeSubmission:true,leaseToken:job.leaseToken});
-        return;
-      }
       if (current && !new Set(["queued", "success", "failed", "cancelled"]).has(current.status)) {
         (await store.updateJob(job.id, { leaseToken: job.leaseToken, status: current.status === "leased" && !current.collectOnly && !current.remoteUrl ? "failed" : "reconciling",
-          errorCode: infraCode || workerError || "WORKER_LAUNCH_FAILED" }));
+          errorCode: workerError || "WORKER_LAUNCH_FAILED" }));
       }
     } finally {
       if (worker) activeProcesses.delete(worker);
@@ -526,12 +511,7 @@ export async function createWorkbenchServer(options = {}) {
       stdout = typeof error.stdout === "string" ? error.stdout : "";
       if (!stdout.trim()) throw new Error(error.killed ? "VERIFIER_TIMEOUT" : "VERIFIER_FAILED");
     }
-    const result=parseVerifierOutput(stdout, account.loginType);
-    if(INFRA_ERRORS.has(result.error)){
-      if(EGRESS_ERRORS.has(result.error))await pool.markAccountEgressFailed(account.id);
-      throw new Error(result.error);
-    }
-    return result;
+    return parseVerifierOutput(stdout, account.loginType);
   };
 
   const resumeDola = createDolaRecovery({store,pool,sessions,locks:profileLaunchLocks,verificationLocks,
@@ -692,7 +672,6 @@ export async function createWorkbenchServer(options = {}) {
             profilePath,
             status: "provisioning",
           });
-          await pool.prepareNewAccount(id);
           return created;
         });
         return json(response, 201, { account });
@@ -1340,7 +1319,7 @@ export async function createWorkbenchServer(options = {}) {
       return new Promise((resolve, reject) => {
         server.once("error", reject);
         server.listen(port, host, () => {
-          poolTimer = setInterval(() => { void sessions.collectFailures().then(()=>pool.heartbeat()).then(()=>loginQueue.wake()).catch(() => { for (const child of activeProcesses) child.kill(); void queueScheduler.stop(); }); }, 20_000);
+          poolTimer = setInterval(() => { void pool.heartbeat().then(()=>loginQueue.wake()).catch(() => { for (const child of activeProcesses) child.kill(); void queueScheduler.stop(); }); }, 20_000);
           poolTimer.unref();
           residencyTimer=setInterval(()=>void residency.wake()?.catch(()=>{}),20_000);
           residencyTimer.unref();void residency.wake()?.catch(()=>{});

@@ -1,4 +1,6 @@
 export const DAILY_CREDITS = 10;
+// Current operational limit agreed with the account owner; not a platform SLA.
+export const DAILY_FREE_VIDEOS = 2;
 export const VIDEO_FIXED_RATIOS = ["9:16", "16:9", "1:1", "3:4", "4:3", "21:9"];
 export const VIDEO_RATIOS = VIDEO_FIXED_RATIOS;
 export const VIDEO_CATALOG = [

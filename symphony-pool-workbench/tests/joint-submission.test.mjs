@@ -17,7 +17,7 @@ function payload() {
   ], option: { unique_key: 'same-idempotency-key', model_config: { model: 'keep-selected-model' } },
   chat_ability: { ability_param: JSON.stringify({ duration: 30, ratio: '9:16', input_box_content: { user_input_content: prompt } }) } };
 }
-function harness(service='dola', images=1, videos=0, selectedPrompt=prompt) {
+function harness(service='dola', images=1, videos=0, selectedPrompt=prompt, confirmationText) {
   const calls=[];
   class XHR {
     open(...args) { this.openArgs=args; }
@@ -25,7 +25,7 @@ function harness(service='dola', images=1, videos=0, selectedPrompt=prompt) {
   }
   const window={ location:{href:`https://www.${service}.com/chat/`},
     fetch:async(input, init)=>{calls.push({input,init,signature:createHash('sha256').update(String(init?.body||'')).digest('hex')});return {ok:true};} };
-  const context=vm.createContext({window,XMLHttpRequest:XHR,URL,Request,config:{service,prompt:selectedPrompt,images,videos}});
+  const context=vm.createContext({window,XMLHttpRequest:XHR,URL,Request,config:{service,prompt:selectedPrompt,images,videos,confirmationText}});
   vm.runInContext('('+source+')(config)',context);
   return { window, calls, XHR, install(nextPrompt) { context.config={service,prompt:nextPrompt,images,videos};vm.runInContext('('+source+')(config)',context); },
     endpoint:`https://www.${service}.com/${service==='doubao'?'samantha/':''}chat/completion` };
@@ -48,6 +48,7 @@ test('Dola and Doubao send image and full text as one user message and preserve 
     assert.notEqual(h.calls[0].signature,createHash('sha256').update(JSON.stringify(body)).digest('hex'));
     assert.equal(h.window.__symphonyJointSubmission.images,1);
     assert.equal(h.window.__symphonyJointSubmission.messages,1);
+    assert.deepEqual(Array.from(h.window.__symphonyJointSubmission.attachmentMessageIds),['reference-message']);
   }
 });
 test('multiple references preserve order and an already joint message stays intact',async()=>{
@@ -202,4 +203,20 @@ test('native video confirmations require a previous full request and exact contr
   assert.equal(h.calls.at(-1).body,body);
   assert.equal(h.calls.length,3);
   assert.equal(h.window.__symphonyJointSubmission.error,null);
+});
+
+test('explicit chat creation control requires the original joint upload and exact original specifications',async()=>{
+  const control='请生成视频：使用 Seedance 2.0 Fast，按上文已确认的 15 秒、9:16 参数，根据本对话已上传的全部 5 张参考图和原剧情分镜生成实际视频。参数已确认，请开始制作。';
+  const h=harness('doubao',5,0,prompt,control);
+  const message=text=>JSON.stringify({messages:[{content_block:[{block_type:10000,content:{text_block:{text}}}]}]});
+  await assert.rejects(h.window.fetch(h.endpoint,{method:'POST',body:message(control)}));
+  assert.equal(h.calls.length,0);
+  const body=payload();body.messages[0].content_block=[1,2,3,4,5].map(n=>imageBlock(String(n)));
+  await h.window.fetch(h.endpoint,{method:'POST',body:JSON.stringify(body)});
+  await h.window.fetch(h.endpoint,{method:'POST',body:message(control)});
+  assert.equal(h.calls.at(-1).init.body,message(control));
+  assert.equal(h.window.__symphonyJointSubmission.accepted,1);
+  for(const changed of [control.replace('15 秒','30 秒'),control.replace('5 张','1 张'),control+'再来一条'])
+    await assert.rejects(h.window.fetch(h.endpoint,{method:'POST',body:message(changed)}));
+  assert.equal(h.calls.length,2);
 });

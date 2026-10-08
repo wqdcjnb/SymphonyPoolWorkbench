@@ -13,6 +13,7 @@ from playwright.sync_api import sync_playwright
 from doubao_challenge import check_human_verification
 from doubao_parameters import confirmation_matches, response_state, prompt_matches, prepare_video_confirmation, is_confirmation_message
 from doubao_duration import install_duration_submission, confirm_duration_submission
+from doubao_chat import confirm_chat_video
 from task_pages import find_page, remember_page, assert_conversation, read_state
 from task_messages import bind_message, scoped_rows, supported
 
@@ -141,15 +142,18 @@ def confirm_existing(context, job):
         raise RuntimeError('DOUBAO_CONFIRMATION_UNCONFIRMED')
     # The database claims this continuation before this process runs. A timeout
     # cannot trigger another confirmation, and a new prompt is never sent here.
-    prepare_video_confirmation(page, job)
-    install_duration_submission(page, job, confirmation_only=True)
-    page.locator('[data-testid="chat_input"] [contenteditable="true"]').first.fill('确认生成')
-    send = page.locator('[data-testid="chat_input_send_button"]')
-    if not send.is_enabled():
-        raise RuntimeError('SUBMIT_NOT_READY')
-    assert_conversation(page, job, 'doubao')
-    send.click()
-    confirm_duration_submission(page)
+    if read_state(job, 'doubao').get('doubaoEntry') == 'chat':
+        confirm_chat_video(context, page, job)
+    else:
+        prepare_video_confirmation(page, job)
+        install_duration_submission(page, job, confirmation_only=True)
+        page.locator('[data-testid="chat_input"] [contenteditable="true"]').first.fill('确认生成')
+        send = page.locator('[data-testid="chat_input_send_button"]')
+        if not send.is_enabled():
+            raise RuntimeError('SUBMIT_NOT_READY')
+        assert_conversation(page, job, 'doubao')
+        send.click()
+        confirm_duration_submission(page)
     deadline = time.monotonic() + 35
     while time.monotonic() < deadline:
         assert_conversation(page, job, 'doubao')

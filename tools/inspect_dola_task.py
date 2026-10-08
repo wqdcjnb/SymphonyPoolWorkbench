@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 from playwright.sync_api import sync_playwright
 from dola_video import generation_phase, response_state, task_url
 from dola_prompt import matches_prompt
+from slider_captcha import solve_dola_captcha
 from task_pages import find_page, remember_page, read_state
 from task_messages import bind_message, read_rows, scoped_rows, supported
 
@@ -39,8 +40,12 @@ def inspect(context, job, excluded_urls=()):
             continue
         state = response_state(page, job)
         if state == 'human':
-            page.bring_to_front()
-            raise RuntimeError('DOLA_HUMAN_VERIFICATION_REQUIRED')
+            # Auto-solve the slider first; the human operator remains the fallback.
+            if solve_dola_captcha(page):
+                state = response_state(page, job)
+            if state == 'human':
+                page.bring_to_front()
+                raise RuntimeError('DOLA_HUMAN_VERIFICATION_REQUIRED')
         if state == 'login':
             raise RuntimeError('LOGIN_REQUIRED')
         try:

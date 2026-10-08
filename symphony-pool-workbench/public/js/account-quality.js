@@ -12,6 +12,7 @@ export function qualityLabel(account) {
 
 export function compareAccountPriority(left, right) {
   return qualityTier(right) - qualityTier(left)
+    || (right.freeVideosRemaining ?? -1) - (left.freeVideosRemaining ?? -1)
     || (right.creditsRemaining ?? -1) - (left.creditsRemaining ?? -1)
     || (right.reliabilityScore ?? 80) - (left.reliabilityScore ?? 80)
     || (left.lastUsedAt || 0) - (right.lastUsedAt || 0)

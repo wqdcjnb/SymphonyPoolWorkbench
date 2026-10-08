@@ -5,10 +5,26 @@ from unittest.mock import MagicMock
 
 from doubao_parameters import confirmation_matches, video_prompt, select_ratio, response_state, prompt_matches, prepare_video_confirmation, VIDEO_PARAMS_PANEL
 from unittest.mock import patch
-from doubao_parameters import is_confirmation_message
+from doubao_parameters import is_confirmation_message, chat_video_prompt, chat_confirmation_text
 
 
 class DoubaoParameterTests(unittest.TestCase):
+    def test_chat_confirmation_keeps_every_spec_and_is_not_an_unrelated_request(self):
+        job = {'model':'Seedance 2.0 Fast','durationSeconds':15,'aspectRatio':'9:16',
+               'referenceAssets':['a','b','c','d','e'],'prompt':'原始人物分镜','negativePrompt':'字幕'}
+        text = chat_confirmation_text(job)
+        self.assertIn('请生成视频', text)
+        self.assertIn('全部 5 张参考图', text)
+        self.assertTrue(is_confirmation_message(text, job))
+        for changed in (text.replace('15 秒', '30 秒'), text.replace('9:16', '16:9'),
+                        text.replace('5 张', '1 张'), text + '再来一条'):
+            self.assertFalse(is_confirmation_message(changed, job))
+        prompt = chat_video_prompt(job)
+        self.assertIn(video_prompt(job), prompt)
+        self.assertIn('严格 15 秒', prompt)
+        for ratio in ['1:1','3:4','4:3','9:16','16:9','21:9']:
+            self.assertIn('比例 '+ratio, chat_video_prompt({**job,'aspectRatio':ratio}))
+
     def test_native_confirmation_display_suffix_is_not_a_new_video_prompt(self):
         job={'aspectRatio':'9:16','durationSeconds':15}
         for text in ['确认生成','生成视频：确认生成，9:16','生成视频：确认生成，9:16，10s','生成视频：确认生成，9:16，15s']:
@@ -54,6 +70,9 @@ class DoubaoParameterTests(unittest.TestCase):
 
     def test_exact_confirmation_and_display_whitespace(self):
         self.assertTrue(confirmation_matches(self.confirmation, self.job))
+        self.assertTrue(confirmation_matches(self.confirmation.replace('5 秒','严格 5 秒'),self.job))
+        for value in ['严格 15 秒','约 5 秒','5–15 秒','5 秒或 15 秒']:
+            self.assertFalse(confirmation_matches(self.confirmation.replace('5 秒',value),self.job))
         self.assertTrue(confirmation_matches(self.confirmation.replace("5 秒", "５秒")
                                             .replace("9:16", "9 ： 16"), self.job))
 

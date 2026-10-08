@@ -34,14 +34,6 @@ def download_video(context, url, output, allowed_hosts):
     Path(output).parent.mkdir(parents=True, exist_ok=True)
     try:
         with session_for_account(context) as session:
-            expected_ip = os.environ.get('WORKBENCH_EXPECTED_IP')
-            if expected_ip:
-                try:
-                    actual_ip = session.get('https://api.ipify.org?format=json', timeout=20).json()['ip']
-                except Exception as error:
-                    raise RuntimeError('EGRESS_CHECK_FAILED') from error
-                if actual_ip != expected_ip:
-                    raise RuntimeError('EGRESS_IP_MISMATCH')
             # Do not forward cookies or proxy credentials to an unvalidated redirect target.
             # Doubao's creation-library CDN requires its page as the referrer.
             headers = {'Referer': 'https://www.doubao.com/'} if 'doubao.com' in allowed_hosts else {}

@@ -5,7 +5,7 @@ function installJointSubmission(config) {
   let active = true;
   Object.defineProperty(window, '__symphonyJointSubmissionControl', { configurable: true,
     value: { disable() { active = false; } } });
-  const state = { accepted: 0, error: null, originalMessages: 0, messages: 0, images: 0, videos: 0, textPresent: false, restoredRetries: 0 };
+  const state = { accepted: 0, error: null, originalMessages: 0, messages: 0, images: 0, videos: 0, textPresent: false, restoredRetries: 0, attachmentMessageIds: [] };
   let originalRequest = null;
   Object.defineProperty(window, '__symphonyJointSubmission', { value: state, configurable: true });
   // The native challenge retry can use rendered list text. Normalize only
@@ -26,6 +26,7 @@ function installJointSubmission(config) {
   function isDoubaoConfirmation(data, text) {
     if (config.service !== 'doubao') return false;
     if (text.trim() === '确认生成') return true;
+    if (typeof config.confirmationText === 'string' && text.trim() === config.confirmationText) return true;
     // The video composer wraps a control reply too. Validate both its input
     // and its generated text, rather than treating it as a missing image.
     let params = data.chat_ability?.ability_param;
@@ -88,11 +89,15 @@ function installJointSubmission(config) {
       state.restoredRetries += 1;
     }
     if (!wanted || !texts.some(text => normalized(text).includes(wanted))) return fail('MULTIMODAL_PROMPT_MISSING');
-    if (!originalRequest) originalRequest = {
+    if (!originalRequest) {
+      state.attachmentMessageIds = data.messages.filter(message =>
+        message.content_block.every(block => block.block_type === 10052)).map(messageId).filter(Boolean);
+      originalRequest = {
       messageIds: data.messages.map(messageId).filter(Boolean), blocks: clone(blocks), texts: [...texts],
       media: JSON.stringify(blocks.filter(block => block.block_type === 10052)),
       chatAbility: data.chat_ability === undefined ? undefined : clone(data.chat_ability),
-    };
+      };
+    }
     // Preserve the final user-message identity to which the platform replies,
     // and retain every attachment/text block and its original metadata/order.
     const originalMessages = data.messages.length;

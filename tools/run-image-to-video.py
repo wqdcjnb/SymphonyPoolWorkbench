@@ -18,7 +18,8 @@ from urllib.parse import parse_qs, urlparse
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 from browser_runtime import generation_browser_options, profile_in_use_error
-from doubao_parameters import confirmation_matches, video_prompt, select_ratio, response_state, prepare_video_confirmation
+from doubao_parameters import confirmation_matches, video_prompt, chat_video_prompt, select_ratio, response_state, prepare_video_confirmation
+from doubao_chat import uses_chat_entry, open_chat_composer, confirm_chat_video
 from video_ratios import VIDEO_RATIOS, VIDEO_FIXED_RATIOS
 from joint_submission import install_joint_submission, confirm_joint_submission
 from doubao_export import export_original
@@ -182,20 +183,25 @@ def _run_doubao_page(context, page, job: dict, output_path: Path) -> None:
 
     if job.get('reuseConversation'):
         assert_conversation(page,job,'doubao')
-    open_video_composer(page, job)
-    page.get_by_text("模型", exact=True).first.locator("..").click(timeout=15_000)
-    selected = page.get_by_text(job["model"], exact=True).last
-    if "升级" in selected.locator("..").inner_text(timeout=5_000):
-        raise RuntimeError("MODEL_REQUIRES_UPGRADE")
-    selected.click(timeout=15_000)
-
-    page.locator(VIDEO_PARAMS_PANEL).click(timeout=15_000)
-    select_base_duration(page)
-    aspect_ratio = job.get("aspectRatio") or "auto"
-    select_ratio(page, aspect_ratio)
-
-    install_duration_submission(page, job)
-    install_joint_submission(page, {**job, 'service': 'doubao'}, platform_prompt(job))
+    chat_entry = uses_chat_entry(job)
+    if chat_entry:
+        open_chat_composer(page, job)
+        job['doubaoEntry'] = 'chat'
+        remember_page(context, page, job, 'doubao', details={'doubaoEntry': 'chat'})
+        prompt = chat_video_prompt(job)
+    else:
+        open_video_composer(page, job)
+        page.get_by_text("模型", exact=True).first.locator("..").click(timeout=15_000)
+        selected = page.get_by_text(job["model"], exact=True).last
+        if "升级" in selected.locator("..").inner_text(timeout=5_000):
+            raise RuntimeError("MODEL_REQUIRES_UPGRADE")
+        selected.click(timeout=15_000)
+        page.locator(VIDEO_PARAMS_PANEL).click(timeout=15_000)
+        select_base_duration(page)
+        select_ratio(page, job.get("aspectRatio") or "auto")
+        install_duration_submission(page, job)
+        prompt = platform_prompt(job)
+    install_joint_submission(page, {**job, 'service': 'doubao'}, prompt)
     attachments = [*job["referenceAssets"]]
     if job["mode"] == "reference_to_video":
         attachments.append(job["referenceVideo"])
@@ -218,7 +224,7 @@ def _run_doubao_page(context, page, job: dict, output_path: Path) -> None:
             arg={"images": len(job["referenceAssets"]), "videos": 1 if job["mode"] == "reference_to_video" else 0},
             timeout=120_000,
         )
-    page.locator('[data-testid="chat_input"] [contenteditable="true"]').first.fill(platform_prompt(job))
+    page.locator('[data-testid="chat_input"] [contenteditable="true"]').first.fill(prompt)
     if doubao_logged_out(page):
         raise RuntimeError("LOGIN_REQUIRED")
     send = page.locator('[data-testid="chat_input_send_button"]')
@@ -234,7 +240,7 @@ def _run_doubao_page(context, page, job: dict, output_path: Path) -> None:
         pass
 
     confirm_joint_submission(page, {**job, 'service': 'doubao'})
-    duration_submissions = confirm_duration_submission(page)
+    duration_submissions = None if chat_entry else confirm_duration_submission(page)
     check_human_verification(page)
     remote_url = wait_for_doubao_task(page,context=context,job=job)
     emit("submitted", remoteUrl=remote_url,remoteMessageId=job.get('remoteMessageId'))
@@ -256,12 +262,16 @@ def _run_doubao_page(context, page, job: dict, output_path: Path) -> None:
             if time.monotonic() >= deadline:
                 raise RuntimeError("PLATFORM_PARAMETERS_MISMATCH")
             page.wait_for_timeout(500)
-        prepare_video_confirmation(page, job)
-        page.locator('[data-testid="chat_input"] [contenteditable="true"]').first.fill("确认生成")
         previous_replies = len(assistant_texts(page,job,'doubao'))
-        page.locator('[data-testid="chat_input_send_button"]').click()
+        if chat_entry:
+            confirm_chat_video(context, page, job)
+        else:
+            prepare_video_confirmation(page, job)
+            page.locator('[data-testid="chat_input"] [contenteditable="true"]').first.fill("确认生成")
+            page.locator('[data-testid="chat_input_send_button"]').click()
         confirm_joint_submission(page, {**job, 'service': 'doubao'})
-        confirm_duration_submission(page, previous_count=duration_submissions)
+        if not chat_entry:
+            confirm_duration_submission(page, previous_count=duration_submissions)
         platform_state = wait_for_doubao_response(page, after_assistant_count=previous_replies, job=job)
         if platform_state == 'confirm':
             raise RuntimeError('DOUBAO_CONFIRMATION_UNCONFIRMED')

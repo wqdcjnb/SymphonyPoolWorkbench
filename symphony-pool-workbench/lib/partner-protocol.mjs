@@ -4,13 +4,16 @@ import { BlockList, isIP } from "node:net";
 import https from "node:https";
 import http from "node:http";
 import { readFileSync } from "node:fs";
-import { VIDEO_CATALOG } from '../public/js/video-policy.js';
+import { DAILY_FREE_VIDEOS, VIDEO_CATALOG } from '../public/js/video-policy.js';
 import { mentionsThirtySeconds, THIRTY_SECOND_MODEL, resolvePromptRatio } from './prompt-policy.mjs';
 
 export const DAY = 86_400_000;
 export const MODELS = VIDEO_CATALOG.map(item => ({ model: item.model, version: item.version,
   durations: [item.duration], ratios: item.ratios, max_images: item.maxImages,
   credits_per_video: item.credits, daily_credits: 10,
+  daily_free_videos_per_account: DAILY_FREE_VIDEOS,
+  quota_unit: 'video', quota_timezone: 'Asia/Shanghai',
+  legacy_credits_deprecated: true,
   ...(item.service === 'dola' ? { delivery_modes: ['watermark_repair'],
     note: '支持文字与参考图片生成；局部修补并重新编码后交付，水印区域可能模糊。' } : {}) }));
 export const ERRORS = {

@@ -2,7 +2,7 @@
   "info": {
     "name": "Symphony 视频 API v1",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-    "description": "先配置 apiKey；先确认已验收模型，再手动提交任务。Dola 须显式选择 watermark_repair，接受局部模糊和重新编码。不要直接运行整个集合。"
+    "description": "先配置 apiKey 并获取模型目录，再手动提交任务。豆包与 Dola 均交付无水印成品；豆包使用 official_original，Dola 显式选择 watermark_repair。不要直接运行整个集合。"
   },
   "variable": [
     {

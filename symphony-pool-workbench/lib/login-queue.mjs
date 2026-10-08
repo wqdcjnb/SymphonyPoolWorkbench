@@ -1,5 +1,3 @@
-import { INFRA_ERRORS } from './infra-errors.mjs';
-
 export function createLoginQueue({pool,store,sessions,verify,assist,maxConcurrent=5,now=Date.now,pollMs=2000}) {
   let running=null,stopped=false,timer=null;
   const held=new Map();
@@ -37,8 +35,7 @@ export function createLoginQueue({pool,store,sessions,verify,assist,maxConcurren
           else await pool.setLogin(item.id,'manual','LOGIN_ASSIST_REQUIRES_MANUAL');
         }catch(error){
           try{await idle(account,token);held.delete(item.id);}catch{}
-          const infrastructure=INFRA_ERRORS.has(error.message);
-          await pool.setLogin(item.id,infrastructure?'queued':'failed',infrastructure?error.message:
+          await pool.setLogin(item.id,'failed',
             /^[A-Z][A-Z0-9_]{2,80}$/.test(error.message)?error.message:'LOGIN_SESSION_FAILED');
         }
       }
@@ -105,10 +102,6 @@ export function createLoginQueue({pool,store,sessions,verify,assist,maxConcurren
         await pool.setLogin(id,result.loggedIn?'done':'failed',result.error||null);
         void wake()?.catch(()=>{});return {ok:Boolean(result.loggedIn),ready:result.ok};
       }catch(error){
-        if(INFRA_ERRORS.has(error.message)){
-          await idle(item.account,item.token);held.delete(id);
-          await pool.setLogin(id,'queued',error.message);throw error;
-        }
         item.finishing=false;await pool.setLogin(id,'manual','LOGIN_VERIFICATION_FAILED');throw new Error('LOGIN_VERIFICATION_FAILED');
       }
     },

@@ -43,20 +43,12 @@ def verify_egress(context):
     if not expected:
         return
     try:
-        if context is None:
-            raise RuntimeError("Browser context required for egress check")
-        page = context.new_page()
-        try:
-            response = page.goto("https://api.ipify.org?format=json", wait_until="domcontentloaded", timeout=20000)
-            browser_ip = response.json()["ip"]
-        finally:
-            page.close()
         from stream_media import session_for_account
         with session_for_account() as session:
-            download_ip = session.get("https://api.ipify.org?format=json", timeout=20).json()["ip"]
+            actual = session.get("https://api.ipify.org?format=json", timeout=20).json()["ip"]
     except Exception as error:
         raise RuntimeError("EGRESS_CHECK_FAILED") from error
-    if browser_ip != expected or download_ip != expected:
+    if actual != expected:
         raise RuntimeError("EGRESS_IP_MISMATCH")
 
 

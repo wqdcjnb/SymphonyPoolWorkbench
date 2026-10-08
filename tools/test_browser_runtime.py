@@ -1,7 +1,6 @@
 """Regression checks for shared browser selection and unattended Linux startup."""
 
 import os
-import sys
 from pathlib import Path
 from runpy import run_path
 from types import SimpleNamespace
@@ -12,7 +11,7 @@ import threading
 import time
 import urllib.request
 
-from browser_runtime import browser_channels, generation_browser_options, verify_egress
+from browser_runtime import browser_channels, generation_browser_options
 
 
 class BrowserRuntimeTests(unittest.TestCase):
@@ -106,26 +105,6 @@ class BrowserRuntimeTests(unittest.TestCase):
              patch("socket.gethostname", return_value="test-host"), \
              patch.object(Path, "read_bytes", return_value=b"chrome\0--user-data-dir=/other\0"):
             self.assertIsNone(launcher["running_browser_pid"](profile))
-
-    def test_egress_check_uses_the_real_browser_and_download_routes(self):
-        context = MagicMock()
-        page = context.new_page.return_value
-        page.goto.return_value.json.return_value = {"ip": "198.51.100.10"}
-        session = MagicMock()
-        session.__enter__.return_value.get.return_value.json.return_value = {"ip": "198.51.100.10"}
-        media = SimpleNamespace(session_for_account=lambda: session)
-        with patch.dict(os.environ, {"WORKBENCH_EXPECTED_IP": "198.51.100.10"}), \
-             patch.dict(sys.modules, {"stream_media": media}):
-            verify_egress(context)
-            page.goto.assert_called_once()
-            page.close.assert_called_once()
-            page.goto.return_value.json.return_value = {"ip": "198.51.100.11"}
-            with self.assertRaisesRegex(RuntimeError, "EGRESS_IP_MISMATCH"):
-                verify_egress(context)
-            page.goto.return_value.json.return_value = {"ip": "198.51.100.10"}
-            session.__enter__.return_value.get.return_value.json.return_value = {"ip": "198.51.100.11"}
-            with self.assertRaisesRegex(RuntimeError, "EGRESS_IP_MISMATCH"):
-                verify_egress(context)
 
 
 if __name__ == "__main__":

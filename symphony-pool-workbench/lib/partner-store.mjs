@@ -1,9 +1,12 @@
 import { openDatabase } from "./database.mjs";
 import { randomUUID } from "node:crypto";
+import { partnerExecutionState } from './long-task.mjs';
+import { isPlatformResultPending } from '../public/js/job-progress.js';
+import { generationHistory, estimateKey, HISTORY_WINDOW_MS } from './generation-estimate.mjs';
 
 export const ITEM_TERMINAL = new Set(["succeeded", "failed", "cancelled"]);
 
-export async function createPartnerStore(databasePath) {
+export async function createPartnerStore(databasePath, {now = Date.now} = {}) {
   const db = await openDatabase(databasePath);
   const initialize = async () => {
   (await db.exec(`PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
@@ -28,18 +31,46 @@ export async function createPartnerStore(databasePath) {
       created_at INTEGER NOT NULL, next_attempt_at INTEGER NOT NULL,
       last_http_status INTEGER, last_error TEXT, UNIQUE(task_id,event_key)
     );
-    CREATE INDEX IF NOT EXISTS partner_deliveries_due ON partner_deliveries(state,next_attempt_at);`));
+    CREATE INDEX IF NOT EXISTS partner_deliveries_due ON partner_deliveries(state,next_attempt_at);
+    CREATE TABLE IF NOT EXISTS partner_progress_snapshots (
+      task_id TEXT PRIMARY KEY REFERENCES partner_tasks(id), sequence INTEGER NOT NULL,
+      fingerprint TEXT NOT NULL, updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS events_job_stage_time_idx ON events(job_id,event_type,created_at);`));
   };
   try { if (db.kind === 'postgres') await db.transaction(initialize); else await initialize(); }
   catch (error) { await db.close(); throw error; }
   const tx = async (action) => (await db.transaction(action));
-  const task = async (row) => row ? { ...row, payload: JSON.parse(row.payload_json),
+  let history = new Map(), historyLoadedAt = null;
+  const loadHistory = async () => {
+    const time = now();
+    if (historyLoadedAt != null && time >= historyLoadedAt && time-historyLoadedAt < 60_000) return history;
+    const jobs = await db.prepare(`SELECT id,model,duration_seconds FROM jobs
+      WHERE status='success' AND completed_at>=? ORDER BY completed_at DESC LIMIT 200`).all(time-HISTORY_WINDOW_MS);
+    const events = jobs.length ? await db.prepare(`SELECT job_id,event_type,created_at,details_json FROM events
+      WHERE job_id IN (${jobs.map(()=>'?').join(',')})
+      AND event_type IN ('job.generating','job.collecting','job.reconciling','job.conversation_restarted')`).all(...jobs.map(j=>j.id)) : [];
+    history = generationHistory(jobs,events);
+    historyLoadedAt = time;
+    return history;
+  };
+  const task = async (row) => {
+    if (!row) return null;
+    const value = { ...row, payload: JSON.parse(row.payload_json),
     assets: JSON.parse(row.assets_json), items: (await db.prepare(
       `SELECT i.*,j.status AS jobStatus,j.error_code AS jobError,j.updated_at AS jobUpdatedAt,
       j.last_observed_stage AS lastObservedStage,j.last_observed_at AS lastObservedAt,
       j.collect_only AS collectOnly,j.remote_url AS remoteUrl,j.next_reconcile_at AS nextReconcileAt,
-      j.reconcile_attempts AS reconcileAttempts,j.reconcile_deadline_at AS reconcileDeadlineAt
-      FROM partner_items i LEFT JOIN jobs j ON j.id=i.job_id WHERE task_id=? ORDER BY item_index`).all(row.id)) } : null;
+      j.reconcile_attempts AS reconcileAttempts,j.reconcile_deadline_at AS reconcileDeadlineAt,
+      j.model AS jobModel,j.duration_seconds AS jobDuration,
+      (SELECT MIN(e.created_at) FROM events e WHERE e.job_id=j.id AND e.event_type='job.generating') AS generationStartedAt
+      FROM partner_items i LEFT JOIN jobs j ON j.id=i.job_id WHERE task_id=? ORDER BY item_index`).all(row.id)) };
+    if (value.items.some(i => !ITEM_TERMINAL.has(i.state) && i.lastObservedStage === 'generating')) {
+      const samples = await loadHistory();
+      for (const item of value.items) item.generationSamples = samples.get(estimateKey(item.jobModel,item.jobDuration)) || [];
+    }
+    return value;
+  };
   const get = async (id) => (await task((await db.prepare("SELECT * FROM partner_tasks WHERE id=?").get(id))));
   const updateSummary = async (id, now) => {
     const current = (await get(id));
@@ -63,10 +94,11 @@ export async function createPartnerStore(databasePath) {
         if (!current) return null;
         for (const item of current.items) {
           if (ITEM_TERMINAL.has(item.state) || !item.jobStatus || ['success','failed','cancelled'].includes(item.jobStatus)) continue;
-          const state = item.jobStatus === 'reconciling' ? 'reconciling'
-            : ['draft','queued'].includes(item.jobStatus) ? 'queued' : 'running';
-          if (state !== item.state || item.error_code !== item.jobError) {
-            await this.updateItem(item,state,{errorCode:item.jobError || null},now);
+          const job = {status:item.jobStatus,errorCode:item.jobError,lastObservedStage:item.lastObservedStage,remoteUrl:item.remoteUrl};
+          const state = partnerExecutionState(job);
+          const errorCode = isPlatformResultPending(job) ? null : item.jobError || null;
+          if (state !== item.state || item.error_code !== errorCode) {
+            await this.updateItem(item,state,{errorCode},now);
           }
         }
         return get(id);
@@ -132,7 +164,8 @@ export async function createPartnerStore(databasePath) {
     },
     async unsettledItems() {
       return (await db.prepare(`SELECT i.*,j.status AS job_status,j.result_path AS job_result_path,
-        j.error_code AS job_error,j.completed_at AS job_completed_at
+        j.error_code AS job_error,j.completed_at AS job_completed_at,
+        j.last_observed_stage AS lastObservedStage,j.remote_url AS remoteUrl
         FROM partner_items i JOIN jobs j ON j.id=i.job_id
         WHERE i.state NOT IN ('succeeded','failed','cancelled')`).all());
     },
@@ -201,6 +234,28 @@ export async function createPartnerStore(databasePath) {
       return (await Promise.all((await db.prepare("SELECT * FROM partner_tasks WHERE notifications_complete=0 ORDER BY created_at").all()).map(task)));
     },
     async hasEvent(id, key) { return Boolean((await db.prepare("SELECT 1 FROM partner_deliveries WHERE task_id=? AND event_key=?").get(id, key))); },
+    async recordProgress(id, describe, now) {
+      return tx(async () => {
+        const current = await this.syncProgress(id,now);
+        const {fingerprint,snapshot} = describe(current);
+        const previous = await db.prepare('SELECT * FROM partner_progress_snapshots WHERE task_id=?').get(id);
+        if (previous?.fingerprint === fingerprint) return {...snapshot,progress_sequence:Number(previous.sequence)};
+        const sequence = Number(previous?.sequence || 0) + 1;
+        await db.prepare(`INSERT INTO partner_progress_snapshots(task_id,sequence,fingerprint,updated_at)
+          VALUES (?,?,?,?) ON CONFLICT(task_id) DO UPDATE SET sequence=excluded.sequence,
+          fingerprint=excluded.fingerprint,updated_at=excluded.updated_at`).run(id,sequence,fingerprint,now);
+        // Old completed tasks are not announced again when someone polls them.
+        if (current.payload.callback_url && !current.notifications_complete) {
+          const eventId = `evt-${randomUUID()}`;
+          const body = {event_id:eventId,event:'video.task.progress',...snapshot,
+            progress_sequence:sequence,batch_index:null,is_final:snapshot.terminal,occurred_at:new Date(now).toISOString()};
+          await db.prepare(`INSERT INTO partner_deliveries
+            (id,task_id,event_key,body_json,callback_url,state,created_at,next_attempt_at)
+            VALUES (?,?,?,?,?,'pending',?,?)`).run(eventId,id,`progress:${sequence}`,JSON.stringify(body),current.payload.callback_url,now,now);
+        }
+        return {...snapshot,progress_sequence:sequence};
+      });
+    },
     async recordEvents(id, entries, finished) {
       (await tx(async () => {
         for (const entry of entries) {

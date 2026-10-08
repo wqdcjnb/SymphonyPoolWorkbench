@@ -7,8 +7,16 @@ ROW_SCRIPT = '''() => [...document.querySelectorAll('[data-message-role]')]
  .filter(e => ['user','assistant'].includes(e.getAttribute('data-message-role')) && e.querySelector('[data-testid="message_content"]'))
  .map(e => {
    const content=e.querySelector('[data-testid="message_content"]');
+   let localId=e.getAttribute('data-local-message-id') || '';
+   if(!localId && e.getAttribute('data-message-role')==='user'){
+     let fiber=e[Object.keys(e).find(key=>key.startsWith('__reactFiber$'))];
+     for(let depth=0;fiber&&depth<8;depth++,fiber=fiber.return){
+       const value=fiber.memoizedProps?.message?.local_message_id;
+       if(typeof value==='string' && /^[A-Za-z0-9_-]{1,160}$/.test(value)){localId=value;break;}
+     }
+   }
    return {id:content.getAttribute('data-message-id') || e.getAttribute('data-message-id') || content.closest('[data-message-id]')?.getAttribute('data-message-id') || '',
-     role:e.getAttribute('data-message-role'),text:content.innerText,images:e.querySelectorAll('img').length,
+     localId,role:e.getAttribute('data-message-role'),text:content.innerText,images:e.querySelectorAll('img').length,
      cards:e.querySelectorAll('[class*="block-video-"]').length,hasVideo:Boolean(e.querySelector('video[src]'))};
  })'''
 
@@ -81,8 +89,21 @@ def scoped_rows(page,job,service,rows=None):
     # (including an image-only message with an ID) remains a task boundary.
     expected_images=len(job.get('referenceAssets') or [])
     if service=='doubao' and expected_images and start+1<len(rows):
+        joint=page.evaluate('() => window.__symphonyJointSubmission || null')
+        if (joint and joint.get('accepted',0)>0 and joint.get('originalMessages',0)>1
+                and joint.get('messages')==1 and joint.get('images')==expected_images and joint.get('textPresent')):
+            # React can move the original upload placeholder after the assistant
+            # reply. Match its captured local message ID, never just its position
+            # or image count, so a genuine later upload remains a task boundary.
+            original_ids=set(joint.get('attachmentMessageIds') or [])
+            if original_ids:
+                rows=rows[:start+1]+[r for r in rows[start+1:] if not (
+                    r['role']=='user' and not stable_id(r.get('id')) and not r['text'].strip()
+                    and r.get('images')==expected_images and r.get('localId') in original_ids)]
+        if start+1>=len(rows):
+            return rows[start:]
         extra=rows[start+1]
-        if (extra['role']=='user' and not stable_id(extra.get('id')) and not extra['text'].strip()
+        if (not (joint or {}).get('attachmentMessageIds') and extra['role']=='user' and not stable_id(extra.get('id')) and not extra['text'].strip()
                 and extra.get('images')==expected_images):
             joint=page.evaluate('() => window.__symphonyJointSubmission || null')
             if (joint and joint.get('accepted',0)>0 and joint.get('originalMessages',0)>1

@@ -44,13 +44,14 @@ services:
       WORKBENCH_GLOBAL_LIMIT: "100"
       WORKBENCH_MANAGED_SESSIONS: "1"
       WORKBENCH_REQUIRE_GROUPS: "1"
-      WORKBENCH_REQUIRE_PROXY_FOR_NEW_ACCOUNTS: "1"
-      WORKBENCH_REQUIRE_MIMIC_FOR_NEW_ACCOUNTS: "1"
       WORKBENCH_SEED_ACCOUNT: "0"
       WORKBENCH_KEY_FILE: /run/secrets/vault-key
       DATABASE_URL_FILE: /run/secrets/database-url
       PARTNER_CONFIG_FILE: /run/secrets/partner-config.json
       PARTNER_PUBLIC_BASE_URL: https://47.84.3.74/v1
+      WORKBENCH_ARK_API_KEY: "${WORKBENCH_ARK_API_KEY:-}"
+      WORKBENCH_ARK_MODEL: "${WORKBENCH_ARK_MODEL:-doubao-seed-2-1-turbo-260628}"
+      WORKBENCH_DOUBAO_GRID_CAPTURE_DIR: "${WORKBENCH_DOUBAO_GRID_CAPTURE_DIR:-/app/symphony-pool-workbench/data/captcha-diagnostics}"
     ports:
       - "127.0.0.1:${WORKBENCH_ADMIN_PORT:-8790}:8080"
       - "127.0.0.1:${WORKBENCH_XPRA_PORT:-6084}:6083"

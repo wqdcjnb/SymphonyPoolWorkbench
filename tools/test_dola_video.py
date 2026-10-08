@@ -55,7 +55,7 @@ class DolaTests(unittest.TestCase):
         with patch.object(dola, 'response_state', return_value=None), \
              patch.object(dola, 'assistant_texts', side_effect=[[], ['The video will be generated.'], ['The video will be generated.']]), \
              patch.object(dola.time, 'monotonic', side_effect=[0, 1, 2, 3, 4, 5, 6, 7, 601]), \
-             self.assertRaisesRegex(RuntimeError, 'DOLA_GENERATION_TIMEOUT'):
+             self.assertRaisesRegex(RuntimeError, 'PLATFORM_RESULT_PENDING'):
             dola.save_video(MagicMock(), page, Path('output.mp4'), emit)
         self.assertEqual([call.args[0] for call in emit.call_args_list], ['generating'])
         self.assertEqual(page.wait_for_timeout.call_count, 3)
@@ -91,10 +91,10 @@ class DolaTests(unittest.TestCase):
             with self.subTest(service=service), self.assertRaisesRegex(RuntimeError, 'COLLECTION_REMOTE_URL_REQUIRED'):
                 validate({'service': service, 'collectOnly': True})
 
-    def test_automatic_collection_uses_a_short_wait_without_changing_generation_timeout(self):
+    def test_each_observation_is_bounded_without_a_generation_deadline(self):
         job = {'model': dola.DOLA_LONG_MODEL, 'collectExistingUrl': 'https://www.dola.com/chat/123', 'collectionCheckSeconds': 90}
         self.assertEqual(dola.generation_timeout(job), 90)
-        self.assertEqual(dola.generation_timeout({'model': dola.DOLA_LONG_MODEL}), 4200)
+        self.assertEqual(dola.generation_timeout({'model': dola.DOLA_LONG_MODEL}), 90)
         worker = run_path(str(Path(__file__).with_name('run-image-to-video.py')))
         page = MagicMock()
         page.locator.return_value.count.return_value = 0
@@ -200,7 +200,7 @@ class DolaTests(unittest.TestCase):
             with patch.object(dola, 'select_model') as select, self.assertRaisesRegex(RuntimeError, 'INVALID_JOB_PARAMETERS'):
                 dola.configure(MagicMock(), MagicMock(), {**base, **invalid})
             select.assert_not_called()
-        self.assertEqual(dola.generation_timeout(base), 4200)
+        self.assertEqual(dola.generation_timeout(base), 90)
 
     def test_long_model_accepts_reference_images_with_all_delivery_ratios(self):
         for ratio in dola.DOLA_RATIOS:
@@ -333,6 +333,16 @@ class DolaTests(unittest.TestCase):
                 dola.run_dola(context, {}, Path('output.mp4'), MagicMock())
             execute.assert_called_once()
             context.preserve_page.assert_called_once_with(page)
+
+    def test_waiting_for_original_result_never_starts_another_conversation(self):
+        context = MagicMock()
+        with patch.object(dola,'execute_dola',side_effect=RuntimeError('PLATFORM_RESULT_PENDING')) as execute, \
+             patch.object(dola,'restart_context') as restart, patch.object(dola,'reserve_parameter_retry') as reserve:
+            with self.assertRaisesRegex(RuntimeError,'PLATFORM_RESULT_PENDING'):
+                dola.run_dola(context,{},Path('output.mp4'),MagicMock())
+            execute.assert_called_once()
+            restart.assert_not_called()
+            reserve.assert_not_called()
 
     def test_recovery_refuses_a_task_with_another_prompt(self):
         context=MagicMock()

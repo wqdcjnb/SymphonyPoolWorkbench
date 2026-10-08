@@ -16,8 +16,6 @@ from desktop_routes import existing_session, process_identity, profile_key, stop
 def desktop_result(session, already_open=False):
     return {"ok": True, "alreadyOpen": already_open,
             "manualBrowser": session.get("manualBrowser", False),
-            "browserProvider": session.get("browserProvider", "chrome"),
-            "endpointPort": session.get("endpointPort"),
             "desktop": {"protocol": "xpra", "accountId": session["accountId"], "token": session["token"]}}
 
 
@@ -197,23 +195,20 @@ class LoginDesktop:
         browser_status = temporary / "browser.json"
         self.browser = self.spawn([*browser_command, "--desktop-root", str(self.root),
                                    "--status-file", str(browser_status)], env, "browser")
-        limit = 3900 if env.get("WORKBENCH_BROWSER_PROVIDER") == "multilogin" else 230
-        for _ in range(limit):
+        for _ in range(230):
+            if not self.healthy():
+                raise RuntimeError("Browser exited")
             if browser_status.exists():
                 result = json.loads(browser_status.read_text(encoding="utf-8"))
                 if not result.get("ok"):
                     write_session(status_file, result)
                     return
                 break
-            if not self.healthy():
-                raise RuntimeError("Browser exited")
             time.sleep(0.1)
         else:
             raise RuntimeError("Browser startup timed out")
         session = {"version": 2, "token": secrets.token_hex(32), "accountId": self.account_id,
             "manualBrowser": result.get("manualBrowser", False),
-            "browserProvider": result.get("browserProvider", "chrome"),
-            "endpointPort": result.get("endpointPort"),
             "profile": self.profile, "display": display, "port": port,
             "manager": process_identity(os.getpid()), "browser": process_identity(result["browserPid"]),
             "xpra": process_identity(xpra.pid), "xvfb": process_identity(xvfb.pid)}

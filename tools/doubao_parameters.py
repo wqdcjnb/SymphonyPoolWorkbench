@@ -8,6 +8,9 @@ VIDEO_PARAMS_PANEL = '[data-input-engine-actionbar-render-entry-key$="video-gene
 
 def is_confirmation_message(text, job):
     value=text.strip()
+    if (job.get('model') and job.get('referenceAssets') and job.get('durationSeconds') and job.get('aspectRatio')
+            and value == chat_confirmation_text(job)):
+        return True
     native='生成视频：确认生成，'+job.get('aspectRatio','')
     # The DOM retains the composer's visible 10s suffix until it is reloaded;
     # the actual requested duration is checked separately in the transport.
@@ -75,6 +78,19 @@ def prepare_video_confirmation(page, job):
     select_ratio(page, job['aspectRatio'])
 
 
+def chat_confirmation_text(job: dict) -> str:
+    return (f'请生成视频：使用 {job["model"]}，按上文已确认的 {job["durationSeconds"]} 秒、'
+            f'{job["aspectRatio"]} 参数，根据本对话已上传的全部 {len(job["referenceAssets"])} 张参考图'
+            '和原剧情分镜生成实际视频。参数已确认，请开始制作。')
+
+
+def chat_video_prompt(job: dict) -> str:
+    return (f'请根据这 {len(job["referenceAssets"])} 张参考图，使用 {job["model"]} '
+            f'生成严格 {job["durationSeconds"]} 秒、比例 {job["aspectRatio"]} 的视频。\n'
+            + video_prompt(job)
+            + '\n请生成实际视频文件。如果指定模型当前不可用，请直接说明，不要自动换成其他模型。')
+
+
 def video_prompt(job: dict) -> str:
     # Match the platform's video composer flow: visual instructions are text;
     # model, duration and ratio are carried by the guarded ability parameters.
@@ -102,7 +118,7 @@ def confirmation_matches(text: str, job: dict) -> bool:
     normalized_model = lambda value: re.sub(r"\s+", " ", value).strip().casefold()
     if normalized_model(fields.get("模型", "")) != normalized_model(job["model"]):
         return False
-    duration = re.fullmatch(r"(\d+)\s*(?:秒|s|seconds?)", fields.get("时长", ""), re.I)
+    duration = re.fullmatch(r"(?:严格\s*)?(\d+)\s*(?:秒|s|seconds?)", fields.get("时长", ""), re.I)
     if not duration or int(duration[1]) != job["durationSeconds"]:
         return False
     ratio = job.get("aspectRatio") or "auto"

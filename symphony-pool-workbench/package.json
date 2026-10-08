@@ -1,6 +1,6 @@
 {
   "name": "symphony-pool-workbench",
-  "version": "2.0.0-rc.29",
+  "version": "2.0.0-rc.29-import3",
   "private": true,
   "type": "module",
   "scripts": {

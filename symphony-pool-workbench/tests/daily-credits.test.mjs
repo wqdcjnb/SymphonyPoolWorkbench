@@ -37,7 +37,7 @@ for (const [service, model, duration, cost] of [
   await store.cancelJob(beforeSubmit.id);
 
   let successful;
-  for (let n = 1; n <= Math.floor(10 / cost); n++) {
+  for (let n = 1; n <= 2; n++) {
     const draft = await queue();
     const claimed = await store.claimNextQueuedJob();
     assert.equal(claimed.job.id, draft.id);
@@ -48,16 +48,19 @@ for (const [service, model, duration, cost] of [
     successful = draft.id;
     await verify();
     assert.equal(await balance(), 10 - n * cost, 'verification and progress must not reset or double-charge');
+    assert.equal((await store.getAccount(service)).freeVideosRemaining,2-n);
   }
   const waiting = await queue();
   assert.equal(await store.claimNextQueuedJob(), null, 'no overspending');
   assert.equal((await store.getJob(waiting.id)).status, 'queued');
   await store.close(); store = await createStore(file);
-  assert.equal(await balance(), 10 % cost, 'ledger survives restart');
+  assert.equal(await balance(), 10-2*cost, 'legacy ledger survives restart');
+  assert.equal((await store.getAccount(service)).freeVideosRemaining,0);
   await store.database.prepare("UPDATE jobs SET status='reconciling',collect_only=1 WHERE id=?").run(successful);
   await store.updateJob(successful, { status: 'collecting' });
   await store.updateJob(successful, { status: 'success' });
-  assert.equal(await balance(), 10 % cost, 'collection does not charge again');
+  assert.equal(await balance(), 10-2*cost, 'collection does not charge again');
+  assert.equal((await store.getAccount(service)).freeVideosRemaining,0);
 
   await store.database.prepare("UPDATE jobs SET credit_date='2020-01-01' WHERE credit_state='charged'").run();
   assert.equal(await balance(), 10, 'a new Beijing day resets the budget');

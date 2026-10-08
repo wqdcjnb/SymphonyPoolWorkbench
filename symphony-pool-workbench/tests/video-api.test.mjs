@@ -167,9 +167,8 @@ test("video API queues two per key, rotates users, and never persists keys", asy
     await eventually(async () => {
       const response = await fetch(`${root}/api/workbench/jobs?status=active`);
       const listing = await response.json();
-      return listing.total === 2
-        && listing.jobs.find((job) => job.providerBatchId === batchA.id)?.status === "generating"
-        && listing.jobs.find((job) => job.providerBatchId === batchB.id)?.status === "queued";
+      return listing.total === 1 && listing.jobs[0]?.providerBatchId === batchA.id
+        && listing.jobs[0]?.status === "generating";
     });
     completeCall(calls[0]);
     await eventually(() => calls.length >= 2);

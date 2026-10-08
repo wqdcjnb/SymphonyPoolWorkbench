@@ -29,12 +29,6 @@ URLS = {
 
 def status_code(error):
     text = str(error).lower()
-    if str(error) in ("EGRESS_CHECK_FAILED", "EGRESS_IP_MISMATCH",
-                      "MULTILOGIN_NOT_CONFIGURED", "MULTILOGIN_BUSY",
-                      "MULTILOGIN_AGENT_IN_USE",
-                      "MULTILOGIN_AGENT_FAILED", "MULTILOGIN_API_FAILED",
-                      "MULTILOGIN_ENDPOINT_NOT_READY", "MULTILOGIN_PROFILE_FAILED"):
-        return str(error)
     if "processsingleton" in text or "user data directory is already in use" in text:
         return "PROFILE_IN_USE"
     if str(error) == "INVALID_BROWSER_CHANNEL":
@@ -81,10 +75,6 @@ def wait_for_browser(context, requested_stop):
 
 
 def serve_browser(args):
-    if os.environ.get("WORKBENCH_BROWSER_PROVIDER") == "multilogin":
-        from multilogin_browser import serve
-        serve(args, URLS[args.login_type])
-        return
     if manual_login_enabled(args.desktop_root, args.login_type):
         return serve_manual_browser(args, URLS[args.login_type], running_browser_pid)
     status = Path(args.status_file)
@@ -152,8 +142,7 @@ def launch(args):
         return {"ok": False, "error": "PROFILE_LAUNCH_FAILED"}
 
 
-    if os.environ.get("WORKBENCH_BROWSER_PROVIDER") != "multilogin":
-        generation_browser_options()  # Reject invalid channel before starting a child.
+    generation_browser_options()  # Reject invalid channel before starting a child.
     session = existing_session(args.desktop_root, profile, args.account_id)
     if session:
         return desktop_result(session, True)
@@ -170,8 +159,7 @@ def launch(args):
             "--account-id", args.account_id, "--desktop-root", args.desktop_root,
         ], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             start_new_session=True, close_fds=True)
-        limit = 4100 if os.environ.get("WORKBENCH_BROWSER_PROVIDER") == "multilogin" else 350
-        for _ in range(limit):
+        for _ in range(350):
             if status.is_file():
                 try:
                     return json.loads(status.read_text(encoding="utf-8"))

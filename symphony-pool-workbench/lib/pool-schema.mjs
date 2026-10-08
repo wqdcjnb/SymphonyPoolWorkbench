@@ -29,9 +29,7 @@ export async function migratePool(db) {
       expected_ip TEXT, actual_ip TEXT, health TEXT NOT NULL DEFAULT 'unchecked', checked_at INTEGER);
     CREATE TABLE IF NOT EXISTS account_bindings (
       account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
-      group_id TEXT REFERENCES egress_groups(id), identifier TEXT, credential TEXT,
-      egress_locked_at INTEGER, browser_provider TEXT,
-      multilogin_folder_id TEXT, multilogin_profile_id TEXT, browser_locked_at INTEGER);
+      group_id TEXT REFERENCES egress_groups(id), identifier TEXT, credential TEXT);
     CREATE TABLE IF NOT EXISTS account_leases (
       account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
       worker_id TEXT NOT NULL, owner TEXT NOT NULL, token TEXT NOT NULL UNIQUE,
@@ -60,10 +58,4 @@ export async function migratePool(db) {
   for (const [column,type] of [['sms_requested_at','INTEGER'],['sms_state','TEXT'],['position','INTEGER NOT NULL DEFAULT 0']]) {
     if (!loginColumns.has(column)) await db.exec(`ALTER TABLE login_items ADD COLUMN ${column} ${type}`);
   }
-  const bindingColumns = new Set((await db.prepare('PRAGMA table_info(account_bindings)').all()).map(c => c.name));
-  if (!bindingColumns.has('egress_locked_at')) await db.exec('ALTER TABLE account_bindings ADD COLUMN egress_locked_at INTEGER');
-  for (const column of ['browser_provider','multilogin_folder_id','multilogin_profile_id','browser_locked_at']) {
-    if (!bindingColumns.has(column)) await db.exec(`ALTER TABLE account_bindings ADD COLUMN ${column} ${column==='browser_locked_at'?'INTEGER':'TEXT'}`);
-  }
-  await db.exec('CREATE UNIQUE INDEX IF NOT EXISTS account_bindings_multilogin_profile_idx ON account_bindings(multilogin_profile_id) WHERE multilogin_profile_id IS NOT NULL');
 }

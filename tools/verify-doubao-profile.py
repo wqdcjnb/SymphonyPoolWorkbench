@@ -13,6 +13,7 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 from browser_runtime import browser_channels, profile_in_use_error
+from doubao_challenge import human_verification_required
 
 
 DOUBAO_URL = "https://www.doubao.com/chat/"
@@ -201,9 +202,6 @@ def main() -> int:
                 context = persistent_context(playwright, **options)
                 break
             except Exception as error:
-                if str(error) in ("EGRESS_CHECK_FAILED", "EGRESS_IP_MISMATCH"):
-                    summary["error"] = str(error)
-                    break
                 if profile_in_use_error(error, profile_path):
                     summary["error"] = "PROFILE_IN_USE"
                     break
@@ -220,6 +218,12 @@ def main() -> int:
             summary["stage"] = "checking_login"
             page.locator('[data-testid="chat_input"]').wait_for(state="visible", timeout=25_000)
             page.wait_for_timeout(2_000)
+
+            # A grid challenge can gate an otherwise healthy profile; solve it
+            # before judging login state, then let the normal checks decide.
+            if human_verification_required(page):
+                from doubao_grid_captcha import solve_doubao_grid_captcha
+                solve_doubao_grid_captcha(page)
 
             page_ready = (
                 urlparse(page.url).hostname in DOUBAO_HOSTS

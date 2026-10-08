@@ -4,7 +4,7 @@ import { suggestAccount } from "./account-suggestion.js";
 
 function statusBadge(account) {
   const label = account.needsAttention ? "待人工处理" : account.lastErrorCode === "PROFILE_IN_USE" ? "窗口未关闭"
-    : statusLabel[account.status] || account.status;
+    : account.status === 'ready' && account.freeVideosRemaining === 0 ? '今日次数已占满' : statusLabel[account.status] || account.status;
   return `<span class="status status-${escapeHtml(account.status)}"><i></i>${escapeHtml(label)}</span>`;
 }
 function hasDesktop() {
@@ -15,14 +15,14 @@ function accountCard(account) {
   const doubao = isDoubao(account);
   const runningJob = state.jobs.some((job) => job.accountId === account.id
     && new Set(["leased", "submitting", "submitted", "generating", "collecting"]).has(job.status));
-  const remaining = Number(account.creditsRemaining || 0);
-  const total = Number(account.creditsTotal || 0);
+  const remaining = Number(account.freeVideosRemaining || 0);
+  const total = Number(account.freeVideosTotal || 0);
   const quotaExhausted = (doubao && account.lastErrorCode === "DOUBAO_FREE_QUOTA_EXHAUSTED")
     || (account.service === "dola" && account.lastErrorCode === "DOLA_QUOTA_EXHAUSTED");
-  const balanceKnown = Number.isInteger(account.creditsRemaining) && total > 0;
+  const balanceKnown = Number.isInteger(account.freeVideosRemaining) && total > 0;
   const percent = balanceKnown ? Math.max(0, Math.min(100, Math.round((remaining / total) * 100))) : 0;
   const models = (account.models || []).map((model) => `<span class="tag">${escapeHtml(model.replace("Dreamina ", ""))}</span>`).join("") || '<span class="muted">验收后显示模型</span>';
-  const balanceLabel = "可用积分";
+  const balanceLabel = "今日可用生成次数";
   const balanceValue = quotaExhausted ? "0" : balanceKnown ? `${formatNumber(remaining)} / ${formatNumber(total)}` : "待读取";
   const capability = `<div class="credit-line"><div><span>${balanceLabel}</span><strong>${balanceValue}</strong></div><span>${balanceKnown ? `${percent}%` : "—"}</span></div>
       <progress class="progress" value="${balanceKnown ? remaining : 0}" max="${total || 1}" aria-label="${balanceLabel}${balanceKnown ? ` ${percent}%` : "待读取"}">${balanceKnown ? `${percent}%` : "待读取"}</progress>`;
@@ -41,7 +41,7 @@ function accountCard(account) {
       <div class="account-heading"><h3>${escapeHtml(account.label)}</h3><span class="platform-label">${account.service === "dola" ? "Dola" : "豆包"}</span>${statusBadge(account)}</div></div>
     ${capability}
     ${accountDetails}
-    <p class="field-note">每日 10 积分 · ${doubao ? '15 秒 / 2 积分' : '30 秒 / 4 积分'} · 按工作台任务扣减 · 北京时间 00:00 重置${account.creditsReserved ? ` · 已预留 ${formatNumber(account.creditsReserved)} 积分` : ''}</p>
+    <p class="field-note">每账号每日最多 2 次免费生成 · 测试也计入 · 北京时间 00:00 重置计数${account.freeVideosReserved ? ` · 已预留 ${formatNumber(account.freeVideosReserved)} 次` : ''}</p>
     <p class="field-note">${escapeHtml(qualityLabel(account))} · 稳定性 ${account.reliabilityScore ?? 80} 分 · 完成 ${account.videoSuccessCount || 0} · 掉线 ${account.authFailureCount || 0} · 验证 ${account.challengeCount || 0} · 中断 ${account.executionFailureCount || 0}</p>
     ${account.needsAttention ? '<p class="account-error">已暂停派发，请人工处理并重新验收。</p>' : ''}
     ${lastError}

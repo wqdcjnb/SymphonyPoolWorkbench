@@ -30,6 +30,7 @@ symphony-pool-workbench/deploy/cloud/*
 !tools/
 tools/*
 !tools/browser_runtime.py
+!tools/release_contract.py
 !tools/task_pages.py
 !tools/task_messages.py
 !tools/test_task_messages.py
@@ -47,6 +48,10 @@ tools/*
 !tools/test_dola_prompt.py
 !tools/joint_submission.py
 !tools/joint_submission.js
+!tools/slider_captcha.py
+!tools/test_slider_captcha.py
+!tools/doubao_grid_captcha.py
+!tools/test_doubao_grid_captcha.py
 !tools/test_joint_submission.py
 !tools/inspect_dola_task.py
 !tools/test_dola_recovery.py
@@ -72,6 +77,8 @@ tools/*
 !tools/open-browser-profile.py
 !tools/run-image-to-video.py
 !tools/doubao_parameters.py
+!tools/doubao_chat.py
+!tools/test_doubao_chat.py
 !tools/doubao_upload.py
 !tools/test_doubao_upload.py
 !tools/doubao_duration.py
@@ -91,10 +98,10 @@ tools/*
 !tools/test_login_input_method.py
 !tools/test_pool_integration.py
 !tools/test_generation_launch.py
-!tools/test_verification_launch.py
 !tools/fixtures/
 !tools/fixtures/xpra-input.html
 !tools/test_verify_symphony_profile.py
+!tools/test_verification_launch.py
 **/.git
 **/.env
 **/.env.*
@@ -109,3 +116,5 @@ tools/*
 **/*.sqlite-*
 **/*.key
 **/*.pem
+!tools/slider_captcha.py
+!tools/test_slider_captcha.py

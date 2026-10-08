@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Symphony 号池视频生成 API",
-    "version": "1.5.2",
-    "description": "共享 Bearer Key；异步任务；每批最多 2 条。Dola 须选择 watermark_repair，修补并重新编码后交付；角落可能模糊，不是官方无水印原片。其他模型仍使用原片校验。"
+    "version": "1.7.2",
+    "description": "共享 Bearer Key；异步任务；每批最多 2 条。豆包与 Dola 均交付无水印成品。豆包使用 official_original；Dola 使用 watermark_repair，完成水印处理和校验后返回下载地址。交付类型按响应字段核对。"
   },
   "servers": [
     {
@@ -1323,7 +1323,7 @@
   "webhooks": {
     "videoResults": {
       "post": {
-        "summary": "批次结果或取消完成通知",
+        "summary": "全阶段进度变化、批次结果或取消完成通知",
         "description": "HTTPS POST 至预登记 callback_url。按 event_id 去重；验签 timestamp + '.' + 原始请求体。签名重试更新、事件 ID 和请求体不变。最长重试 24 小时；不能依赖到达顺序。",
         "security": [],
         "parameters": [
@@ -1390,6 +1390,92 @@
       }
     },
     "schemas": {
+      "GenerationEstimate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status",
+          "source",
+          "scope",
+          "sample_count",
+          "estimated_total_seconds",
+          "estimated_remaining_seconds",
+          "estimated_completion_at",
+          "started_at",
+          "calculated_at"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "available 有估算；exceeded 已超过估算但任务继续；unavailable 当前无法预计；not_applicable 已结束生成",
+            "enum": [
+              "available",
+              "exceeded",
+              "unavailable",
+              "not_applicable"
+            ]
+          },
+          "source": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "recent_history",
+              null
+            ],
+            "description": "recent_history 为工作台历史耗时估算，不是平台承诺时间"
+          },
+          "scope": {
+            "type": "string",
+            "description": "仅当前这条视频的平台生成阶段，不含排队、人工验证、下载和后处理",
+            "const": "platform_generation"
+          },
+          "sample_count": {
+            "type": "integer",
+            "description": "参与估算的近期同模型、同时长成功任务数；至少 2 条，最多 20 条",
+            "minimum": 0,
+            "maximum": 20
+          },
+          "estimated_total_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "description": "预计生成总耗时，秒；历史 P80 向上取整到 30 秒"
+          },
+          "estimated_remaining_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "description": "查询时预计剩余秒数；无法预计或已超过估算时为 null，不能作为超时或失败依据"
+          },
+          "estimated_completion_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "预计平台生成完成时间，UTC；exceeded 时保留已超过的估算时间，尚不表示视频可下载"
+          },
+          "started_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "工作台首次观察到平台开始生成的时间"
+          },
+          "calculated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "本次倒计时计算时间；轮询更新，不会每秒触发回调"
+          }
+        }
+      },
       "Progress": {
         "type": "object",
         "additionalProperties": false,
@@ -1398,10 +1484,12 @@
           "label",
           "description",
           "action",
+          "reason_code",
           "platform_status",
           "delivery_status",
           "updated_at",
-          "last_observed_at"
+          "last_observed_at",
+          "generation_estimate"
         ],
         "properties": {
           "phase": {
@@ -1414,6 +1502,7 @@
               "submitting",
               "awaiting_platform",
               "generating",
+              "waiting_result",
               "downloading",
               "processing",
               "download_blocked",
@@ -1421,10 +1510,13 @@
               "awaiting_login",
               "awaiting_confirmation",
               "submission_unconfirmed",
+              "original_conversation_missing",
               "parameter_mismatch",
               "reconciling",
               "needs_review",
+              "cancelling",
               "completed",
+              "partially_completed",
               "failed",
               "cancelled"
             ]
@@ -1447,6 +1539,13 @@
               "recollect",
               "inspect"
             ]
+          },
+          "reason_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "当前等待或异常的机器可读原因；null 表示没有异常。排队或待验证不代表失败"
           },
           "platform_status": {
             "type": "string",
@@ -1483,6 +1582,9 @@
               "null"
             ],
             "format": "date-time"
+          },
+          "generation_estimate": {
+            "$ref": "#/components/schemas/GenerationEstimate"
           }
         }
       },
@@ -1726,7 +1828,7 @@
               "boolean",
               "null"
             ],
-            "description": "官方无水印原片为 true；修补版为 null，不宣称是官方无水印原片或经过逐帧无水印识别"
+            "description": "官方无水印原片校验通过为 true；Dola 修补成品为 null，同时 postprocessed:true。null 本身不表示带水印或失败，应结合 delivery_mode、status 和 video_url 判断结果"
           },
           "expires_at": {
             "type": [
@@ -1879,6 +1981,14 @@
               "cancelled"
             ]
           },
+          "progress": {
+            "$ref": "#/components/schemas/Progress"
+          },
+          "progress_sequence": {
+            "type": "integer",
+            "description": "状态或估算变化时递增；倒计时自然减少不递增。忽略旧版本回调，同版本轮询仍可刷新倒计时",
+            "minimum": 1
+          },
           "terminal": {
             "type": "boolean",
             "description": "只有 true 才是任务终态；HTTP 超时、查询失败和 reconciling 不表示生成失败"
@@ -2015,18 +2125,6 @@
           "results"
         ],
         "properties": {
-          "event_id": {
-            "type": "string",
-            "description": "通知唯一 ID，作为接收方去重键"
-          },
-          "event": {
-            "type": "string",
-            "description": "批次结束，或取消请求最终结束",
-            "enum": [
-              "video.batch.completed",
-              "video.task.finished"
-            ]
-          },
           "task_id": {
             "type": "string",
             "description": "本服务生成的任务 ID",
@@ -2038,16 +2136,6 @@
             "description": "调用方生成的业务任务 ID；本服务内永久防重；轮换 Key 不清空记录",
             "pattern": "^[A-Za-z0-9_-]{1,128}$",
             "example": "order_20260930_0001"
-          },
-          "batch_index": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "minimum": 1
-          },
-          "is_final": {
-            "type": "boolean"
           },
           "status": {
             "type": "string",
@@ -2062,6 +2150,73 @@
               "failed",
               "cancelled"
             ]
+          },
+          "progress": {
+            "$ref": "#/components/schemas/Progress"
+          },
+          "progress_sequence": {
+            "type": "integer",
+            "description": "状态或估算变化时递增；倒计时自然减少不递增。忽略旧版本回调，同版本轮询仍可刷新倒计时",
+            "minimum": 1
+          },
+          "terminal": {
+            "type": "boolean",
+            "description": "只有 true 才是任务终态；HTTP 超时、查询失败和 reconciling 不表示生成失败"
+          },
+          "poll_after_seconds": {
+            "type": "integer",
+            "description": "建议查询间隔秒数，默认 60；终态为 0"
+          },
+          "status_url": {
+            "type": "string",
+            "description": "原任务查询地址",
+            "format": "uri"
+          },
+          "notification_mode": {
+            "type": "string",
+            "description": "未提供对方回调地址时使用查询模式",
+            "enum": [
+              "poll",
+              "webhook_and_poll"
+            ]
+          },
+          "model": {
+            "type": "string",
+            "description": "固定模型名称，区分大小写；正反提示词出现 30s、30秒等表达时优先采用 Dreamina Seedance 2.5，响应返回最终模型；版本标签见 /models",
+            "enum": [
+              "Seedance 2.0 Fast",
+              "Seedance 2.0 Mini",
+              "Dreamina Seedance 2.5"
+            ]
+          },
+          "duration": {
+            "type": "integer",
+            "description": "秒；豆包固定 15，Dola 固定 30。正反提示词出现 30 秒表达时覆盖为 30，响应返回最终时长",
+            "enum": [
+              15,
+              30
+            ]
+          },
+          "ratio": {
+            "type": "string",
+            "description": "仅支持六种固定比例：1:1、3:4、4:3、9:16、16:9、21:9；正向 prompt 明确指定的比例优先于本字段，negative_prompt 不参与比例覆盖。响应 ratio 为最终采用的比例；多个冲突比例返回 PROMPT_RATIO_CONFLICT",
+            "enum": [
+              "9:16",
+              "16:9",
+              "1:1",
+              "3:4",
+              "4:3",
+              "21:9"
+            ]
+          },
+          "delivery_mode": {
+            "type": "string",
+            "description": "默认 official_original；Dola 使用 watermark_repair（局部修补与重新编码）。命中提示词 30 秒优先规则时自动采用 watermark_repair，其余 Dola 请求须显式选择；响应返回最终交付方式",
+            "enum": [
+              "official_original",
+              "watermark_repair"
+            ],
+            "default": "official_original"
           },
           "count": {
             "type": "integer",
@@ -2086,16 +2241,65 @@
             "type": "integer",
             "minimum": 0
           },
-          "occurred_at": {
+          "created_at": {
             "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
             "format": "date-time"
           },
           "results": {
             "type": "array",
-            "maxItems": 2,
+            "maxItems": 100,
             "items": {
               "$ref": "#/components/schemas/Result"
+            },
+            "description": "进度事件包含全部条目的当前阶段；批次完成事件最多 2 条"
+          },
+          "webhooks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Delivery"
             }
+          },
+          "idempotent_replay": {
+            "type": "boolean",
+            "description": "仅创建响应包含；true 表示返回已有任务"
+          },
+          "event_id": {
+            "type": "string",
+            "description": "通知唯一 ID，作为接收方去重键"
+          },
+          "event": {
+            "type": "string",
+            "description": "进度变化、批次结束、取消请求最终结束",
+            "enum": [
+              "video.task.progress",
+              "video.batch.completed",
+              "video.task.finished"
+            ]
+          },
+          "batch_index": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "is_final": {
+            "type": "boolean"
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },
@@ -2150,16 +2354,37 @@
                 },
                 "daily_credits": {
                   "type": "integer",
-                  "description": "每账号每日积分",
-                  "const": 10
+                  "description": "旧积分预算，仅兼容保留；不能据此计算生成次数",
+                  "const": 10,
+                  "deprecated": true
                 },
                 "credits_per_video": {
                   "type": "integer",
-                  "description": "每条视频积分消耗",
+                  "description": "旧积分权重，仅兼容保留",
                   "enum": [
                     2,
                     4
-                  ]
+                  ],
+                  "deprecated": true
+                },
+                "daily_free_videos_per_account": {
+                  "type": "integer",
+                  "description": "当前每账号每日免费生成调度上限，测试生成也计入；平台额度用尽时提前停止",
+                  "const": 2
+                },
+                "quota_unit": {
+                  "type": "string",
+                  "description": "额度单位",
+                  "const": "video"
+                },
+                "quota_timezone": {
+                  "type": "string",
+                  "description": "工作台日计数时区",
+                  "const": "Asia/Shanghai"
+                },
+                "legacy_credits_deprecated": {
+                  "type": "boolean",
+                  "const": true
                 },
                 "delivery_modes": {
                   "type": "array",
@@ -2196,7 +2421,11 @@
                 ],
                 "max_images": 9,
                 "credits_per_video": 2,
-                "daily_credits": 10
+                "daily_credits": 10,
+                "daily_free_videos_per_account": 2,
+                "quota_unit": "video",
+                "quota_timezone": "Asia/Shanghai",
+                "legacy_credits_deprecated": true
               },
               {
                 "model": "Seedance 2.0 Mini",
@@ -2214,7 +2443,11 @@
                 ],
                 "max_images": 9,
                 "credits_per_video": 2,
-                "daily_credits": 10
+                "daily_credits": 10,
+                "daily_free_videos_per_account": 2,
+                "quota_unit": "video",
+                "quota_timezone": "Asia/Shanghai",
+                "legacy_credits_deprecated": true
               },
               {
                 "model": "Dreamina Seedance 2.5",
@@ -2233,6 +2466,10 @@
                 "max_images": 9,
                 "credits_per_video": 4,
                 "daily_credits": 10,
+                "daily_free_videos_per_account": 2,
+                "quota_unit": "video",
+                "quota_timezone": "Asia/Shanghai",
+                "legacy_credits_deprecated": true,
                 "delivery_modes": [
                   "watermark_repair"
                 ],

@@ -1,6 +1,8 @@
+import { isPlatformResultPending } from '../public/js/job-progress.js';
+
 export const RECONCILE_WINDOW_MS = 24 * 60 * 60_000;
 export const POLL_AFTER_SECONDS = 60;
-export const recoverableErrors = new Set(['DOLA_GENERATION_TIMEOUT', 'DOUBAO_GENERATION_TIMEOUT',
+export const recoverableErrors = new Set(['PLATFORM_RESULT_PENDING', 'DOLA_RESULT_MEDIA_PENDING', 'DOLA_GENERATION_TIMEOUT', 'DOUBAO_GENERATION_TIMEOUT',
   'PLATFORM_GENERATION_TIMEOUT', 'WORKER_TIMEOUT', 'WORKER_EXITED', 'WORKER_INTERRUPTED',
   'WORKER_LEASE_EXPIRED', 'WORKER_LAUNCH_FAILED', 'QUEUE_DISPATCH_ERROR', 'BROWSER_DISCONNECTED',
   'BROWSER_CLOSED', 'DOLA_PAGE_TIMEOUT', 'DOUBAO_PAGE_TIMEOUT', 'BROWSER_AUTOMATION_FAILED',
@@ -14,9 +16,17 @@ export function collectionUrl(value, service) {
 
 export function reconciliationPlan(job, now = Date.now()) {
   if (!collectionUrl(job.remoteUrl) || !recoverableErrors.has(job.errorCode)) return null;
+  // A check has a time budget; an accepted platform generation has no local expiry.
+  if (isPlatformResultPending(job)) return {deadline:null,
+    next:now + Math.min(5 * 60_000, 60_000 * 2 ** Math.min(job.reconcileAttempts || 0, 3))};
   const deadline = job.reconcileDeadlineAt || now + RECONCILE_WINDOW_MS;
   if (['DOUBAO_ORIGINAL_EXPORT_TIMEOUT','DOUBAO_ORIGINAL_EXPORT_FAILED'].includes(job.errorCode)
     && (job.reconcileAttempts || 0) >= 3) return {deadline,next:null};
   const delay = Math.min(15 * 60_000, 60_000 * 2 ** Math.min(job.reconcileAttempts || 0, 4));
   return { deadline, next: now >= deadline ? null : Math.min(deadline, now + delay) };
+}
+
+export function partnerExecutionState(job) {
+  return job.status === 'reconciling' && !isPlatformResultPending(job) ? 'reconciling'
+    : ['draft','queued'].includes(job.status) ? 'queued' : 'running';
 }

@@ -106,39 +106,6 @@ test("a pre-submission failure switches accounts without falsifying the credit b
   }
 });
 
-test("proxy outage keeps a targeted job queued without degrading its account",async()=>{
-  const root=fs.mkdtempSync(path.join(os.tmpdir(),"queue-egress-"));
-  const store=await createStore(path.join(root,"queue.sqlite"));
-  try{
-    await store.ensureAccount({id:"fixed-account",label:"Fixed",loginType:"doubao",service:"doubao",
-      workerId:"pc",profilePath:path.join(root,"profile"),status:"auth_required"});
-    await store.saveVerification("fixed-account",{ok:true,loggedIn:true,modelsObserved:["Seedance 2.0 Mini"],
-      remainingCredits:10,totalCredits:10,creditPageReady:true,createPageReady:true});
-    const job=await store.createDraftJob({idempotencyKey:"fixed-exit",enqueue:true,accountId:"fixed-account",
-      mode:"image_to_video",model:"Seedance 2.0 Mini",durationSeconds:15,aspectRatio:"9:16",
-      prompt:"test",referenceAssets:[],priority:50});
-    assert.equal((await store.claimNextQueuedJob()).job.id,job.id);
-    const retried=await store.handleDispatchFailure(job.id,"fixed-account","EGRESS_NOT_READY",{beforeSubmission:true});
-    assert.equal(retried.status,"queued");
-    assert.equal(retried.errorCode,"EGRESS_NOT_READY");
-    assert.equal((await store.getAccount("fixed-account")).status,"ready");
-    assert.equal((await store.getAccount("fixed-account")).creditsReserved,0);
-    await store.setAccountChecking("fixed-account");
-    await store.saveVerificationFailure("fixed-account","EGRESS_IP_MISMATCH");
-    assert.equal((await store.getAccount("fixed-account")).status,"ready");
-    assert.equal((await store.getAccount("fixed-account")).needsAttention,false);
-    assert.equal((await store.claimNextQueuedJob()).job.id,job.id);
-    const vendorRetry=await store.handleDispatchFailure(job.id,"fixed-account","MULTILOGIN_AGENT_FAILED",{beforeSubmission:true});
-    assert.equal(vendorRetry.status,"queued");
-    assert.equal(vendorRetry.errorCode,"MULTILOGIN_AGENT_FAILED");
-    assert.equal((await store.getAccount("fixed-account")).creditsReserved,0);
-    await store.setAccountChecking("fixed-account");
-    await store.saveVerificationFailure("fixed-account","MULTILOGIN_API_FAILED");
-    assert.equal((await store.getAccount("fixed-account")).status,"ready");
-    assert.equal((await store.getAccount("fixed-account")).needsAttention,false);
-  }finally{await store.close();fs.rmSync(root,{recursive:true,force:true});}
-});
-
 test("login occupancy skips accounts, preserves their quota, and resumes the original job", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "queue-login-busy-"));
   const store = (await createStore(path.join(root, "test.sqlite")));
@@ -158,7 +125,8 @@ test("login occupancy skips accounts, preserves their quota, and resumes the ori
     assert.equal((await store.claimNextQueuedJob({ unavailableAccountIds: ["high"] })).account.id, "low");
     const before = (await store.getAccount("low"));
     (await store.handleDispatchFailure(job.id, "low", "PROFILE_IN_USE", { beforeSubmission: true }));
-    assert.deepEqual((await store.getAccount("low")), { ...before, creditsRemaining: 10, creditsReserved: 0 });
+    assert.deepEqual((await store.getAccount("low")), { ...before, creditsRemaining: 10, creditsReserved: 0,
+      freeVideosRemaining: 2, freeVideosReserved: 0 });
     assert.equal((await store.getJob(job.id)).status, "queued");
     const retry = (await store.claimNextQueuedJob());
     assert.equal(retry.job.id, job.id);

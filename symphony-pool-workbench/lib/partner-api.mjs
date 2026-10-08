@@ -1,12 +1,14 @@
 import { createIntakeQueue } from './intake-queue.mjs';
 import { POLL_AFTER_SECONDS } from './long-task.mjs';
-import { partnerProgress } from '../public/js/job-progress.js';
+import { partnerProgress, partnerTaskProgress, isPlatformResultPending } from '../public/js/job-progress.js';
+import { partnerExecutionState } from './long-task.mjs';
 import { promises as files } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash, randomUUID } from "node:crypto";
 import { pipeline } from "node:stream/promises";
 import { createPartnerStore, ITEM_TERMINAL } from "./partner-store.mjs";
+import { generationEstimate, stableGenerationEstimate } from './generation-estimate.mjs';
 import { assertDelivery, deliveryReceiptPath, WATERMARK_ERROR } from "./media-delivery.mjs";
 import { repairDolaVideo } from './watermark-repair.mjs';
 import { DAY, MODELS, ERRORS, PartnerError, configurePartnerApi, equalSecret,
@@ -26,7 +28,7 @@ const openapiPath = fileURLToPath(new URL("../docs/partner-openapi.json", import
 export async function createPartnerApi({ databasePath, generatedRoot, uploadRoot, port, wakeQueue,
   options = {}, now = Date.now, onError = (code) => console.error(code) }) {
   const config = configurePartnerApi(options, port);
-  const store = (await createPartnerStore(databasePath));
+  const store = (await createPartnerStore(databasePath, {now}));
   const intakeQueue = createIntakeQueue({ maxWaiting: config.maxQueuedIntakes, waitMs: config.intakeWaitMs });
   const assetRoot = path.resolve(uploadRoot, "partner");
   const outputRoot = path.resolve(generatedRoot);
@@ -45,8 +47,9 @@ export async function createPartnerApi({ databasePath, generatedRoot, uploadRoot
   const result = (task, item, time) => {
     const value = { index: item.item_index, batch_index: item.batch_index,
       status: item.state === "pending" ? "queued" : item.state,progress:partnerProgress(item) };
-    if (item.state === 'reconciling') value.recovery = {
-      mode: item.nextReconcileAt ? 'automatic' : 'manual',
+    value.progress.generation_estimate = generationEstimate(item,value.progress,time);
+    if (item.state === 'reconciling' || value.progress.phase === 'waiting_result') value.recovery = {
+      mode: item.nextReconcileAt || value.progress.phase === 'waiting_result' ? 'automatic' : 'manual',
       attempts: item.reconcileAttempts || 0, next_check_at: iso(item.nextReconcileAt),
       deadline_at: iso(item.reconcileDeadlineAt),
     };
@@ -88,8 +91,8 @@ export async function createPartnerApi({ databasePath, generatedRoot, uploadRoot
     }
     return value;
   };
-  const serialize = async (task, time = now()) => {
-    task = await store.syncProgress(task.id,time) || task;
+  const snapshot = (task, time) => {
+    const results = task.items.map((item) => result(task, item, time));
     return { task_id: task.id, client_task_id: task.client_task_id,
     terminal: task.finished_at != null, poll_after_seconds: task.finished_at != null ? 0 : POLL_AFTER_SECONDS,
     status_url: `${config.baseUrl}/videos/${task.id}`,
@@ -97,8 +100,20 @@ export async function createPartnerApi({ databasePath, generatedRoot, uploadRoot
     status: task.state, model: task.payload.model, duration: task.payload.duration,
     ratio: task.payload.ratio, delivery_mode: deliveryMode(task), count: task.count, ...counts(task),
     created_at: iso(task.created_at), updated_at: iso(Math.max(task.updated_at,...task.items.map(item=>item.jobUpdatedAt || 0))), finished_at: iso(task.finished_at),
-    results: task.items.map((item) => result(task, item, time)),
-    webhooks: (await store.deliverySummary(task.id)) };
+    progress:partnerTaskProgress(task,results),results };
+  };
+  const recordProgress = async (task, time) => store.recordProgress(task.id, current => {
+    const value = snapshot(current,time);
+    // Timestamps and refreshed signed URLs are not state transitions.
+    const stable = p => ({...Object.fromEntries(['phase','label','description','action','reason_code','platform_status','delivery_status'].map(k=>[k,p[k]])),
+      generation_estimate:p.generation_estimate ? stableGenerationEstimate(p.generation_estimate) : null});
+    const fingerprint = createHash('sha256').update(JSON.stringify({status:value.status,terminal:value.terminal,
+      progress:stable(value.progress),results:value.results.map(r=>({index:r.index,status:r.status,progress:stable(r.progress)}))})).digest('hex');
+    return {fingerprint,snapshot:value};
+  },time);
+  const serialize = async (task, time = now()) => {
+    const value = await recordProgress(task,time);
+    return {...value,webhooks:await store.deliverySummary(task.id)};
   };
   const json = (response, status, body) => {
     if (body.task_id && body.terminal === false) response.setHeader('Retry-After', POLL_AFTER_SECONDS);
@@ -135,6 +150,7 @@ export async function createPartnerApi({ databasePath, generatedRoot, uploadRoot
   }
   async function recordNotifications(time) {
     for (const task of (await store.notificationsPending())) {
+      await recordProgress(task,time);
       const entries = [];
       const batches = [...new Set(task.items.filter((i) => i.job_id).map((i) => i.batch_index))];
       for (const batch of batches) {
@@ -192,10 +208,11 @@ export async function createPartnerApi({ databasePath, generatedRoot, uploadRoot
       } else if (["failed", "cancelled"].includes(item.job_status)) {
         (await store.updateItem(item, item.job_status, { errorCode: item.job_error }, now()));
       } else {
-        const state = item.job_status === "reconciling" ? "reconciling"
-          : ["draft", "queued"].includes(item.job_status) ? "queued" : "running";
-        if (state !== item.state || item.error_code !== item.job_error) {
-          (await store.updateItem(item, state, { errorCode: item.job_error || null }, now()));
+        const job = {status:item.job_status,errorCode:item.job_error,lastObservedStage:item.lastObservedStage,remoteUrl:item.remoteUrl};
+        const state = partnerExecutionState(job);
+        const errorCode = isPlatformResultPending(job) ? null : item.job_error || null;
+        if (state !== item.state || item.error_code !== errorCode) {
+          (await store.updateItem(item, state, { errorCode }, now()));
         }
       }
     }

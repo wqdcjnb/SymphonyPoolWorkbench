@@ -56,6 +56,10 @@ function verifiedModel(job, account) {
     : account.models.includes(job.model) ? job.model : null;
 }
 
+const hasGenerationQuota = (account, model) => Number.isInteger(account.freeVideosRemaining)
+  ? account.freeVideosRemaining > 0
+  : Number.isInteger(account.creditsRemaining) && account.creditsRemaining >= (videoModel(model)?.credits || 0);
+
 // Explain a blocked queue using the same requirements as selection. This never
 // changes eligibility or reserves a slot, and leaves routing error contracts intact.
 export function videoTargetBlocker(job, accounts) {
@@ -65,11 +69,11 @@ export function videoTargetBlocker(job, accounts) {
   if (!candidates.length) return 'NO_COMPATIBLE_ACCOUNT';
   const ready = candidates.filter(a => a.status === 'ready' && !a.needsAttention);
   const verified = ready.map(account => ({account, model:verifiedModel(job, account)})).filter(a => a.model);
-  const funded = verified.filter(({account, model}) => Number.isInteger(account.creditsRemaining)
-    && account.creditsRemaining >= videoModel(model).credits);
+  const funded = verified.filter(({account, model}) => hasGenerationQuota(account, model));
   if (funded.length) return funded.every(a => a.account.busy) ? 'ACCOUNT_ALREADY_RUNNING' : null;
   if (candidates.some(a => /HUMAN_VERIFICATION|CAPTCHA/.test(a.attentionReason || a.lastErrorCode || ''))) return 'ACCOUNTS_VERIFICATION_REQUIRED';
   if (candidates.some(a => a.status === 'auth_required' || /LOGIN_REQUIRED|LOGIN_EXPIRED/.test(a.attentionReason || a.lastErrorCode || ''))) return 'ACCOUNTS_LOGIN_REQUIRED';
+  if (candidates.every(a => a.freeVideosRemaining === 0)) return 'ACCOUNT_DAILY_VIDEO_LIMIT';
   if (verified.length) return 'ACCOUNT_CREDITS_INSUFFICIENT';
   if (!ready.length) return 'ACCOUNTS_NOT_READY';
   return 'MODEL_NOT_VERIFIED_FOR_ACCOUNT';
@@ -97,7 +101,7 @@ export function resolveVideoTarget(job, accounts) {
     if (!serviceSupports(account.service, job.model, job.durationSeconds, imageCount, job.aspectRatio || "9:16", mode)) return [];
     if ((account.status !== "ready" || account.needsAttention) || account.busy) return [];
     const model = verifiedModel(job, account);
-    if (!Number.isInteger(account.creditsRemaining) || account.creditsRemaining < (videoModel(model)?.credits || 0)) return [];
+    if (!hasGenerationQuota(account, model)) return [];
     return model && account.models.includes(model) ? [{ account, model }] : [];
   });
 

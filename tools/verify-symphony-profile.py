@@ -150,9 +150,6 @@ def main() -> int:
                 break
             except Exception as error:  # Keep output sanitized; never print profile contents.
                 last_launch_error = type(error).__name__
-                if str(error) in ("EGRESS_CHECK_FAILED", "EGRESS_IP_MISMATCH"):
-                    summary["error"] = str(error)
-                    break
                 if profile_in_use_error(error, profile_path):
                     summary["error"] = "PROFILE_IN_USE"
                     break

@@ -115,6 +115,28 @@ class DoubaoRecoveryTests(unittest.TestCase):
             page.locator.return_value.click.assert_not_called()
             page.locator.return_value.first.fill.assert_not_called()
 
+    def test_chat_recovery_uses_explicit_creation_instruction_and_preserves_task_scope(self):
+        from doubao_parameters import chat_confirmation_text
+        context,page=MagicMock(),MagicMock()
+        page.url='https://www.doubao.com/chat/123';context.pages=[page]
+        job={**self.job,'remoteUrl':page.url,'referenceAssets':['a','b','c','d','e']}
+        with patch('inspect_doubao_task.conversation_state',side_effect=['confirmation','generating']), \
+                patch('inspect_doubao_task.read_state',return_value={'doubaoEntry':'chat'}), \
+                patch('inspect_doubao_task.confirm_chat_video') as confirm, \
+                patch('inspect_doubao_task.prepare_video_confirmation') as native, \
+                patch('inspect_doubao_task.install_duration_submission') as duration:
+            self.assertEqual(confirm_existing(context,job)['platformState'],'generating')
+        confirm.assert_called_once_with(context,page,job)
+        native.assert_not_called();duration.assert_not_called()
+        rows=[{'role':'user','text':job['prompt']},
+              {'role':'assistant','text':'视频生成参数确认\n模型：Seedance 2.0 Fast\n时长：15 秒\n比例：9:16'},
+              {'role':'user','text':chat_confirmation_text(job)},
+              {'role':'assistant','text':'本次使用 Seedance 2.0 Fast 生成。视频生成好后，我会主动发送给你。'}]
+        self.assertEqual(classify_rows(job,rows),'generating')
+        rows[2]['text']+='另外再生成一个'
+        with self.assertRaisesRegex(RuntimeError,'DOUBAO_TASK_AMBIGUOUS'):
+            classify_rows(job,rows)
+
     def test_local_placeholder_or_other_platform_cannot_be_bound(self):
         for value in ['https://www.doubao.com/chat/local_123', 'https://www.dola.com/chat/123', 'https://evil.invalid/chat/123']:
             with self.assertRaisesRegex(RuntimeError, 'INVALID_REMOTE_URL'):

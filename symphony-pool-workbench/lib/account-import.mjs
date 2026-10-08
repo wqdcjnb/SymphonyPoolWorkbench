@@ -18,11 +18,7 @@ function csvRows(text,trim=true) {
 
 export function parseAccountCsv(text) {
   const rows=csvRows(text),headers=rows.shift();
-  if(!['id,label,platform,identifier,groupId',
-    'id,label,platform,identifier,groupId,multiloginFolderId,multiloginProfileId',
-    'id,label,platform,identifier,groupId,workerId',
-    'id,label,platform,identifier,groupId,workerId,multiloginFolderId,multiloginProfileId']
-    .includes(headers.join(',')))throw new Error('CSV_HEADERS_INVALID');
+  if(!['id,label,platform,identifier,groupId','id,label,platform,identifier,groupId,workerId'].includes(headers.join(',')))throw new Error('CSV_HEADERS_INVALID');
   return rows.map((values,index)=>{if(values.length!==headers.length)throw new Error(`CSV_ROW_${index+2}_INVALID`);return Object.fromEntries(headers.map((key,i)=>[key,values[i]]));});
 }
 
@@ -42,8 +38,7 @@ export async function importAccounts({store,pool,profileRoot,rows,preview=false}
   if(!Array.isArray(rows)||!rows.length||rows.length>100)throw new Error('INVALID_ACCOUNT_LIST');
   return store.database.transaction(async()=>{
     const existing=new Set((await store.listAccounts()).map(a=>a.id.toLowerCase()));
-    const snapshot=await pool.snapshot(),groups=snapshot.groups,counts=new Map(groups.map(g=>[g.id,Number(g.accounts)]));
-    const usedProfiles=new Set(snapshot.bindings.map(b=>b.multiloginProfileId?.toLowerCase()).filter(Boolean));
+    const groups=(await pool.snapshot()).groups,counts=new Map(groups.map(g=>[g.id,Number(g.accounts)]));
     const errors=[];
     const normalized=rows.map((r,index)=>{
       let code=null;
@@ -52,27 +47,12 @@ export async function importAccounts({store,pool,profileRoot,rows,preview=false}
       else if(fs.existsSync(path.join(profileRoot,`${r.id}_sandbox_data`)))code='PROFILE_ALREADY_EXISTS';
       else if(!['doubao','dola'].includes(r.platform))code='INVALID_LOGIN_TYPE';
       else if(typeof r.label!=='string'||!r.label.trim()||r.label.length>80)code='INVALID_LABEL';
-      else if(pool.requireProxyForNewAccounts&&!r.groupId)code='FIXED_PROXY_REQUIRED';
-      else if(!pool.requireMimicForNewAccounts&&(r.multiloginFolderId||r.multiloginProfileId))code='BROWSER_PROVIDER_LOCKED';
-      else if(Boolean(r.multiloginFolderId)!==Boolean(r.multiloginProfileId))code='MULTILOGIN_PROFILE_REQUIRED';
-      else if(r.multiloginFolderId&&!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(r.multiloginFolderId))
-        code='INVALID_MULTILOGIN_PROFILE';
-      else if(r.multiloginProfileId&&!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(r.multiloginProfileId))
-        code='INVALID_MULTILOGIN_PROFILE';
-      if(!code&&r.multiloginProfileId&&usedProfiles.has(r.multiloginProfileId.toLowerCase()))
-        code='MULTILOGIN_PROFILE_IN_USE';
       if(!code&&(r.identifier||r.cookies)){try{loginCredential(r.platform,r);}catch(error){code=error.message;}}
       if(r.id)existing.add(r.id.toLowerCase());
-      if(r.multiloginProfileId)usedProfiles.add(r.multiloginProfileId.toLowerCase());
-      if(r.groupId){const group=groups.find(g=>g.id===r.groupId);if(!group)code='GROUP_NOT_FOUND';else{
-        if(pool.requireProxyForNewAccounts&&group.mode!=='proxy')code='FIXED_PROXY_REQUIRED';
-        counts.set(group.id,counts.get(group.id)+1);if(counts.get(group.id)>group.capacity)code='GROUP_CAPACITY_EXCEEDED';}}
+      if(r.groupId){const group=groups.find(g=>g.id===r.groupId);if(!group)code='GROUP_NOT_FOUND';else{counts.set(group.id,counts.get(group.id)+1);if(counts.get(group.id)>group.capacity)code='GROUP_CAPACITY_EXCEEDED';}}
       if(code)errors.push({row:index+2,code});
       return {id:r.id,label:r.label,loginType:r.platform,service:r.platform,
-        profilePath:path.join(profileRoot,`${r.id}_sandbox_data`),status:'auth_required',
-        groupId:r.groupId||null,multiloginFolderId:r.multiloginFolderId||null,
-        multiloginProfileId:r.multiloginProfileId||null,
-        identifier:r.identifier||null,cookies:r.cookies||null,source:r.source};
+        profilePath:path.join(profileRoot,`${r.id}_sandbox_data`),status:'auth_required',groupId:r.groupId||null,identifier:r.identifier||null,cookies:r.cookies||null,source:r.source};
     });
     if(errors.length)return {ok:false,count:rows.length,errors};
     // Legacy CSV workerId values are accepted but assignment is always automatic.
@@ -85,9 +65,7 @@ export async function importAccounts({store,pool,profileRoot,rows,preview=false}
     if(preview)return {ok:true,count:rows.length,errors:[],assignments};
     for(const account of normalized){
       await store.ensureAccount(account);
-      await pool.prepareNewAccount(account.id);
       if(account.groupId)await pool.bind([account.id],account.groupId);
-      if(account.multiloginProfileId)await pool.bindMultiloginProfile(account.id,account.multiloginFolderId,account.multiloginProfileId);
       if(account.identifier||account.cookies)await pool.saveLoginIdentity(account.id,account);
     }
     return {ok:true,count:rows.length,errors:[],assignments};

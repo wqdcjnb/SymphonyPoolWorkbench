@@ -14,6 +14,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 MAX_VIDEO_BYTES = 500_000_000
 ORIGINAL_HOSTS = ("doubao.com", "douyinvod.com")
 ERROR = "WATERMARK_FREE_RESULT_REQUIRED"
+NOT_IN_LIBRARY = 'DOUBAO_ORIGINAL_NOT_IN_LIBRARY'
 
 
 def validate_original_url(url):
@@ -23,7 +24,7 @@ def validate_original_url(url):
             or parsed.port not in (None, 443) or parsed.fragment
             or not any(parsed.hostname == host or (parsed.hostname or '').endswith('.' + host)
                        for host in ORIGINAL_HOSTS)
-            or any('watermark' in value.lower() and 'no_watermark' not in value.lower()
+            or any('watermark' in value.lower() and value.lower() not in ('no_watermark', 'unwatermarked')
                    for key in ('lr', 'logo_type') for value in query.get(key, []))):
         raise RuntimeError(ERROR)
     return url
@@ -134,7 +135,7 @@ def save_verified_original(context, original: dict, output_path: Path, downloade
                    "verified_at": datetime.now(timezone.utc).isoformat()}
         if original.get('export_endpoint'):
             receipt['export_endpoint'] = original['export_endpoint']
-            receipt['source_checksum'] = 'http_etag_md5'
+            receipt['source_checksum'] = original.get('source_checksum', 'http_etag_md5')
         receipt_temp.write_text(json.dumps(receipt), encoding="utf-8")
         temporary.replace(output_path)
         receipt_temp.replace(receipt_path)
@@ -169,7 +170,8 @@ def workspace_original(context, page, vid):
         try {
             const home = await post('homepage', {});
             const roots = (home.children || []).filter(node => node.name === '我的创作');
-            if (roots.length !== 1) return {error:'not_found'};
+            if (roots.length > 1) return {error:'identity'};
+            if (roots.length === 0) return {error:'not_found'};
             let cursor, node;
             for (let batch=0; batch<20; batch++) {
                 const data = await post('node_info', {node_id:roots[0].id, need_full_path:true,
@@ -193,6 +195,8 @@ def workspace_original(context, page, vid):
         raise RuntimeError('DOUBAO_ORIGINAL_EXPORT_TIMEOUT')
     if result.get('error') == 'identity' or (not result.get('error') and result.get('video_id') != vid):
         raise RuntimeError(ERROR)
+    if result.get('error') == 'not_found':
+        raise RuntimeError(NOT_IN_LIBRARY)
     if result.get('error'):
         raise RuntimeError('DOUBAO_ORIGINAL_EXPORT_FAILED')
     url = validate_original_url(result['url'])
@@ -207,6 +211,40 @@ def workspace_original(context, page, vid):
     return {'url':url,'backup_urls':backups,'export_endpoint':'samantha/aispace/get_download_info'}
 
 
+def conversation_original(page, vid):
+    """Use the normal resource export for this exact saved conversation video.
+
+    Chat-generated videos are not always indexed in My Creations. The platform
+    still checks original-download permission; its flag, video identity, stream
+    marker and checksum must all pass before the result can be delivered.
+    """
+    result = page.evaluate('''async vid => {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 30000);
+        try {
+            const suffix = '?aid=497858&device_platform=web&samantha_web=1&use-olympus-account=1&version_code=20800&pkg_type=release_version';
+            const response = await fetch('/creativity/resource/get_without_watermark' + suffix, {
+                method:'POST', credentials:'include', signal:controller.signal,
+                headers:{'Content-Type':'application/json'}, body:JSON.stringify({uri:[],vid:[vid]})});
+            if (response.status !== 200) return {error:'export_failed'};
+            return {payload:await response.json()};
+        } catch (error) {return {error:error.name === 'AbortError' ? 'timeout' : 'export_failed'};}
+        finally {clearTimeout(timer);}
+    }''', vid)
+    if result.get('error') == 'timeout':
+        raise RuntimeError('DOUBAO_ORIGINAL_EXPORT_TIMEOUT')
+    payload = result.get('payload')
+    if result.get('error') or not isinstance(payload, dict) or payload.get('code') != 0:
+        raise RuntimeError('DOUBAO_ORIGINAL_EXPORT_FAILED')
+    data = payload.get('data')
+    videos = data.get('download_video') if isinstance(data, dict) else None
+    if not isinstance(videos, dict) or set(videos) != {vid}:
+        raise RuntimeError(ERROR)
+    original = select_original(payload)
+    return {**original, 'export_endpoint':'creativity/resource/get_without_watermark',
+            'source_checksum':'video_model_md5'}
+
+
 def export_original(context, page, output_path: Path, downloader=None) -> dict:
     def is_export(response):
         parsed = urlparse(response.url)
@@ -219,7 +257,12 @@ def export_original(context, page, output_path: Path, downloader=None) -> dict:
         # Use the creation-library original, matched to the current result card.
         vid = original_video_id(page)
         if vid:
-            original = workspace_original(context, page, vid)
+            try:
+                original = workspace_original(context, page, vid)
+            except RuntimeError as error:
+                if str(error) != NOT_IN_LIBRARY:
+                    raise
+                original = conversation_original(page, vid)
             return save_verified_original(context, original, output_path, downloader)
         # The page also starts a blob download. Chrome's native download UI can
         # crash in the container; delivery uses the verified original below.

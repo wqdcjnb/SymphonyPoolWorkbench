@@ -50,17 +50,12 @@ def valid_session(session, proc_root=Path("/proc")):
         browser = process_args(session["browser"], proc_root)
         xpra = process_args(session["xpra"], proc_root)
         display = process_args(session["xvfb"], proc_root)
-        browser_valid = (("--browser" in browser
-            and has_option(browser, "--profile", session["profile"])
-            and has_option(browser, "--account-id", session["accountId"]))
-            if session.get("browserProvider") == "multilogin" else
-            (Path(browser[0]).name in ("chrome", "chromium")
-            and f"--user-data-dir={session['profile']}" in browser)) if browser else False
         return bool(manager and browser and xpra and display
             and "--serve" in manager
             and has_option(manager, "--profile", session["profile"])
             and has_option(manager, "--account-id", session["accountId"])
-            and browser_valid
+            and Path(browser[0]).name in ("chrome", "chromium")
+            and f"--user-data-dir={session['profile']}" in browser
             and any(Path(arg).name == "xpra" for arg in xpra[:2])
             and session["display"] in xpra
             and f"--bind-ws=127.0.0.1:{session['port']}" in xpra

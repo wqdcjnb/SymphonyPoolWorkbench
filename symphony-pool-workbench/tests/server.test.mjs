@@ -681,6 +681,9 @@ console.log(JSON.stringify({ stage: "success", resultPath: job.outputPath }));`,
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     assert.ok((await Promise.all(oneStep.body.jobs.map(job => app.store.getJob(job.id)))).every(job => job.status === "success"));
+    // The first two accounts have each used their two daily generations.
+    await addReadyAccount('batch-doubao-3');
+    await addReadyAccount('batch-doubao-4');
     const textOnly = await post(port, "/api/video-generations", {
       accountId: "auto", model: "Seedance 2.0 Fast", durationSeconds: 15,
       aspectRatio: "16:9", positivePrompt: "一只纸飞机穿过云层",

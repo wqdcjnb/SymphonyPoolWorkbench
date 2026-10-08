@@ -8,10 +8,29 @@ import { jobProgress, partnerProgress } from '../public/js/job-progress.js';
 import { createStore } from '../lib/db.mjs';
 import { reconciliationPlan } from '../lib/long-task.mjs';
 
+test('accepted generation remains normal waiting beyond 70 minutes and 24 hours',()=>{
+  const job={status:'reconciling',lastObservedStage:'generating',remoteUrl:'https://www.dola.com/chat/123',
+    reconcileAttempts:100,reconcileDeadlineAt:1,submittedAt:1};
+  for(const errorCode of ['PLATFORM_RESULT_PENDING','DOLA_GENERATION_TIMEOUT','DOUBAO_GENERATION_TIMEOUT']) {
+    const waiting={...job,errorCode};
+    const plan=reconciliationPlan(waiting,10*24*60*60_000);
+    assert.equal(plan.deadline,null);assert.equal(plan.next,10*24*60*60_000+300_000);
+    assert.equal(jobProgress(waiting).phase,'waiting_result');assert.equal(jobProgress(waiting).action,'none');
+  }
+  assert.equal(jobProgress({...job,errorCode:'LOGIN_EXPIRED_DURING_SUBMISSION'}).phase,'awaiting_login');
+  assert.equal(jobProgress({...job,errorCode:'DOLA_HUMAN_VERIFICATION_REQUIRED'}).phase,'awaiting_verification');
+  assert.equal(jobProgress({...job,errorCode:'BROWSER_DISCONNECTED'}).phase,'reconciling');
+  assert.equal(jobProgress({...job,lastObservedStage:'collecting',errorCode:'DOLA_RESULT_MEDIA_PENDING'}).phase,'download_blocked');
+  assert.equal(jobProgress({...job,status:'failed',errorCode:'PLATFORM_GENERATION_FAILED'}).phase,'failed');
+  for(const status of ['leased','submitted','generating']) {
+    assert.equal(jobProgress({...job,status,collectOnly:1}).phase,'waiting_result');
+  }
+});
+
 test('queued work exposes the actual prerequisite in both UI and partner API',()=>{
   for (const [error,label] of Object.entries({ACCOUNTS_LOGIN_REQUIRED:'等待账号登录',
     ACCOUNTS_VERIFICATION_REQUIRED:'等待账号验证',ACCOUNT_ALREADY_RUNNING:'等待账号空闲',
-    ACCOUNT_CREDITS_INSUFFICIENT:'等待可用额度',WORKER_CAPACITY_FULL:'等待节点空闲'})) {
+    ACCOUNT_CREDITS_INSUFFICIENT:'等待可用额度',ACCOUNT_DAILY_VIDEO_LIMIT:'等待每日次数恢复',WORKER_CAPACITY_FULL:'等待节点空闲'})) {
     const progress=jobProgress({status:'queued',errorCode:error});
     assert.equal(progress.label,label);assert.equal(progress.phase,'queued');
     assert.equal(partnerProgress({state:'queued',jobStatus:'queued',jobError:error}).label,label);

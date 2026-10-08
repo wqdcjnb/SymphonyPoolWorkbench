@@ -12,6 +12,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from stream_media import download_video
 from watermark_repair import repair_video
 from joint_submission import install_joint_submission, confirm_joint_submission
+from slider_captcha import solve_dola_captcha
 from dola_prompt import build_prompt, matches_prompt
 from video_ratios import VIDEO_FIXED_RATIOS
 from task_pages import job_page, remember_page, begin_submission, assert_conversation, finish_page, can_restart_context, restart_context, read_state
@@ -99,7 +100,9 @@ def enable_extended_duration(page, seconds):
 def generation_timeout(job):
     if job and job.get('collectExistingUrl') and job.get('collectionCheckSeconds'):
         return max(10, min(600, int(job['collectionCheckSeconds'])))
-    return 4200 if job and job.get('model') == DOLA_LONG_MODEL else 600
+    # Bound each observation, then let the scheduler revisit the same conversation.
+    # This budget is never a generation deadline.
+    return 90
 
 
 def task_url(value):
@@ -291,6 +294,8 @@ def wait_for_submission(page, timeout=90, job=None, context=None):
     while time.monotonic() < deadline:
         state = response_state(page, job)
         if state == 'human':
+            if solve_dola_captcha(page):
+                continue
             raise RuntimeError('DOLA_HUMAN_VERIFICATION_REQUIRED')
         if state == 'quota':
             raise RuntimeError('DOLA_QUOTA_EXHAUSTED')
@@ -317,6 +322,8 @@ def save_video(context, page, output, emit, timeout=600, job=None):
     while time.monotonic() < deadline:
         state = response_state(page, job)
         if state == 'human':
+            if solve_dola_captcha(page):
+                continue
             raise RuntimeError('DOLA_HUMAN_VERIFICATION_REQUIRED')
         if state == 'quota':
             raise RuntimeError('DOLA_QUOTA_EXHAUSTED')
@@ -361,7 +368,8 @@ def save_video(context, page, output, emit, timeout=600, job=None):
             page.reload(wait_until='domcontentloaded', timeout=60000)
             last_refresh = time.monotonic()
         page.wait_for_timeout(2000)
-    raise RuntimeError('DOLA_GENERATION_TIMEOUT' if generation_announced or opened_card
+    raise RuntimeError('DOLA_RESULT_MEDIA_PENDING' if opened_card else
+                       'PLATFORM_RESULT_PENDING' if generation_announced
                        else 'DOLA_SUBMISSION_UNCONFIRMED')
 
 
@@ -436,6 +444,8 @@ def wait_for_collection_message(page, job, timeout=30):
     deadline = time.monotonic() + timeout
     while True:
         if page.locator('#captcha_container:visible').count():
+            if solve_dola_captcha(page):
+                continue
             raise RuntimeError('DOLA_HUMAN_VERIFICATION_REQUIRED')
         if logged_out(page):
             raise RuntimeError('LOGIN_EXPIRED_DURING_SUBMISSION')

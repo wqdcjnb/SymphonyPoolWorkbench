@@ -4,6 +4,7 @@ import re
 import sys
 from playwright.sync_api import sync_playwright
 from login_assist import assist_page
+from slider_captcha import solve_dola_captcha
 
 
 def unique_visible(locator):
@@ -30,6 +31,14 @@ def act(data):
                 return {'ok': False, 'smsState': 'manual', 'reason': 'LOGIN_PAGE_NOT_READY'}
             return assist_page(pages[0], data)
         page = browser.contexts[0].pages[0]
+        # Best-effort: a platform slider can gate the Dola login/chat page while
+        # the session is attached. Solving it never replaces the user's own
+        # Google or SMS steps.
+        if data.get('platform') == 'dola':
+            try:
+                solve_dola_captcha(page)
+            except Exception:
+                pass
         if data.get('code'):
             code = str(data['code'])
             if not re.fullmatch(r'[0-9A-Za-z-]{4,10}', code):

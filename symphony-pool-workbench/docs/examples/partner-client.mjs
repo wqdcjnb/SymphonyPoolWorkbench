@@ -18,7 +18,7 @@ const taskPath = id => {
   return '/videos/'+id;
 };
 const safeTask = task => Object.fromEntries(['task_id','client_task_id','status','terminal','poll_after_seconds',
-  'completed_count','succeeded_count','failed_count','cancelled_count','wait_expired','retrying','delivery_pending']
+  'completed_count','succeeded_count','failed_count','cancelled_count','wait_expired','retrying','delivery_pending','progress','progress_sequence']
   .filter(key => task[key] !== undefined).map(key => [key,task[key]]));
 
 export class Client {

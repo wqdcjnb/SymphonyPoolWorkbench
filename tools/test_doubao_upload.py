@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 from playwright.sync_api import sync_playwright
 from doubao_upload import open_video_composer, wait_for_image_attachments
+from doubao_chat import open_chat_composer
 
 FIXTURE = '''<meta charset="utf-8"><div data-testid="chat_input">
 <div data-testid="attachment_area"></div>
@@ -61,12 +62,34 @@ class DoubaoUploadBrowserTests(unittest.TestCase):
         self.assertEqual(self.page.locator('[data-testid=attachment-image-card]').all_text_contents(),['reference-a.png','reference-b.png'])
         self.assertEqual(self.page.url,'https://www.doubao.com/chat/')
 
+    def test_chat_entry_keeps_multiple_attachments_without_selecting_video_panel(self):
+        self.page.goto('https://www.doubao.com/chat/123')
+        self.page.evaluate('''() => {
+          document.querySelector('[data-testid=chat_input]').insertAdjacentHTML('beforeend',
+            '<button data-testid="chat_input_action_model" id="chatModel">豆包 快速</button><button id="expert" hidden>专家</button>');
+          chatModel.onclick=()=>{events.push('model');expert.hidden=false};
+          expert.onclick=()=>{events.push('expert');chatModel.innerText='豆包 2.1 Turbo';expert.hidden=true};
+        }''')
+        open_chat_composer(self.page,{**self.job,'reuseConversation':True})
+        self.assertEqual(self.page.evaluate('events'),['model','expert','plus','picker','files:2','uploaded'])
+        self.assertEqual(self.page.locator('[data-testid=attachment-image-card]').count(),2)
+        self.assertEqual(self.page.locator('[data-input-engine-actionbar-render-entry-key]').count(),0)
+
     def test_reused_video_composer_exits_to_plus_without_reloading_history(self):
         self.page.goto('https://www.doubao.com/chat/123')
         self.page.evaluate('window.historyMarker="original"; video.click();events=[]')
         open_video_composer(self.page,{**self.job,'reuseConversation':True})
         self.assertEqual(self.page.evaluate('historyMarker'),'original')
         self.assertEqual(self.page.evaluate('events'),['exit','plus','picker','files:2','uploaded','video'])
+
+    def test_visible_plus_before_hydration_retries_menu_without_duplicate_files(self):
+        self.page.goto('https://www.doubao.com/chat/123')
+        self.page.evaluate('''() => {
+          const plus=document.querySelector('[data-testid=upload_file_button]');
+          plus.onclick=()=>{events.push('unbound');plus.onclick=()=>{events.push('plus');menu.hidden=false}};
+        }''')
+        open_video_composer(self.page,{**self.job,'reuseConversation':True})
+        self.assertEqual(self.page.evaluate('events'),['unbound','plus','picker','files:2','uploaded','video'])
 
     def test_stale_attachments_stop_before_the_file_picker(self):
         self.page.goto('https://www.doubao.com/chat/123')
