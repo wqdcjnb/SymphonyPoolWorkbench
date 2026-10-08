@@ -44,7 +44,7 @@ internal static class SymphonyXpraLauncher
             var launch = new ProcessStartInfo(settings[0]);
             launch.UseShellExecute = false;
             launch.WorkingDirectory = Path.GetDirectoryName(settings[0]);
-            // Xpra ignores decoder and audio options in URLs. Pass these local
+            // Xpra ignores window-close, decoder and audio options in URLs. Pass these local
             // login defaults on the command line so no extra probes are started.
             launch.Arguments = BuildArguments(clientUrl);
             launch.EnvironmentVariables["XPRA_LOG_FILENAME"] = settings[1];
@@ -68,7 +68,7 @@ internal static class SymphonyXpraLauncher
     {
         return "attach --splash=no --audio=no --speaker=disabled --microphone=disabled " +
             "--webcam=no --printing=no --file-transfer=no --open-files=no --open-url=no " +
-            "--opengl=no --video-decoders=openh264 " + QuoteArgument(clientUrl);
+            "--opengl=no --video-decoders=openh264 --window-close=disconnect " + QuoteArgument(clientUrl);
     }
 
     internal static string NormalizeConnection(string value)

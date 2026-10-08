@@ -35,6 +35,11 @@ async def pump(reader, writer):
         await writer.drain()
 
 
+async def watch_route(routes, token):
+    while routes.lookup(token):
+        await asyncio.sleep(0.25)
+
+
 async def connect(reader, writer, routes):
     upstream = None
     transfers = []
@@ -53,7 +58,8 @@ async def connect(reader, writer, routes):
         # Xpra receives a plain upgrade; the session bearer is consumed here.
         upstream.write(b"GET / HTTP/1.1\r\n" + header.split(b"\r\n", 1)[1])
         await upstream.drain()
-        transfers = [asyncio.create_task(pump(reader, upstream)), asyncio.create_task(pump(remote, writer))]
+        transfers = [asyncio.create_task(pump(reader, upstream)), asyncio.create_task(pump(remote, writer)),
+                     asyncio.create_task(watch_route(routes, token))]
         await asyncio.wait(transfers, return_when=asyncio.FIRST_COMPLETED)
     except (ValueError, OSError, TimeoutError, asyncio.IncompleteReadError, asyncio.LimitOverrunError) as error:
         print("XPRA_GATEWAY_ERROR", type(error).__name__, file=sys.stderr, flush=True)

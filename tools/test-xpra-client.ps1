@@ -53,6 +53,21 @@ public static class SymphonyXpraClientChecks {
             } finally { LocalFree(parsed); }
             checks++;
         }
+        int launchCount;
+        System.IntPtr launchArgs = CommandLineToArgvW("client " + SymphonyXpraLauncher.BuildArguments(accepted[0]), out launchCount);
+        if (launchArgs == System.IntPtr.Zero) throw new System.Exception("Launcher argument parsing failed.");
+        try {
+            int disconnectFlags = 0;
+            for (int index = 0; index < launchCount; index++) {
+                string value = System.Runtime.InteropServices.Marshal.PtrToStringUni(
+                    System.Runtime.InteropServices.Marshal.ReadIntPtr(launchArgs, System.IntPtr.Size * index));
+                if (value == "--window-close=disconnect") disconnectFlags++;
+                if (index == launchCount - 1 && value != accepted[0])
+                    throw new System.Exception("Launcher changed the connection URL.");
+            }
+            if (disconnectFlags != 1) throw new System.Exception("Viewer close must only disconnect.");
+        } finally { LocalFree(launchArgs); }
+        checks++;
         return checks;
     }
 }

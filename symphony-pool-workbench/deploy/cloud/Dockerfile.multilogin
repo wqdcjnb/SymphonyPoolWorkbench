@@ -1,0 +1,17 @@
+ARG SYMPHONY_RELEASE
+FROM symphony-workbench:${SYMPHONY_RELEASE}
+
+USER root
+ARG MULTILOGIN_AGENT_SHA256
+RUN test -n "${MULTILOGIN_AGENT_SHA256}" \
+    && curl --fail --location --retry 3 \
+      "https://mlxdists.s3.eu-west-3.amazonaws.com/mlx/latest/multiloginx-amd64.deb" \
+      -o /tmp/multilogin-agent.deb \
+    && echo "${MULTILOGIN_AGENT_SHA256}  /tmp/multilogin-agent.deb" | sha256sum --check --strict - \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends /tmp/multilogin-agent.deb libayatana-appindicator3-1 \
+    && command -v mlx \
+    && ! ldd /opt/mlx/agent.bin | grep -q 'not found' \
+    && rm -f /tmp/multilogin-agent.deb \
+    && rm -rf /var/lib/apt/lists/*
+USER workbench

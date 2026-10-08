@@ -9,7 +9,7 @@ export PATH="$APP_ROOT/.runtime/node/bin:$PATH"
 umask 077
 for required in "$XAUTHORITY"; do
   if [[ ! -s "$required" ]]; then
-    echo 'Desktop credentials missing. Follow docs/UBUNTU.md before starting.' >&2
+    echo 'Desktop credentials missing. Run deploy/ubuntu/install.sh before starting.' >&2
     exit 1
   fi
 done

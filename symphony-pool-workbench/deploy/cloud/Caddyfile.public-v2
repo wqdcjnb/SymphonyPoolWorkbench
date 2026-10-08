@@ -1,0 +1,109 @@
+{
+    admin off
+    default_sni {$WORKBENCH_PUBLIC_IP}
+    servers {
+        protocols h1 h2
+    }
+    # Desktop paths are bearer capabilities. Do not record them in error logs.
+    log default {
+        format filter {
+            wrap json
+            fields {
+                request>uri delete
+                request>headers>Authorization delete
+                request>headers>Cookie delete
+            }
+        }
+    }
+}
+
+https://{$WORKBENCH_PUBLIC_IP} {
+    tls {
+        issuer acme {
+            dir https://acme-v02.api.letsencrypt.org/directory
+            profile shortlived
+        }
+    }
+    header {
+        -Server
+        Referrer-Policy no-referrer
+        Cache-Control no-store
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+    }
+    @badOrigin {
+        header Origin *
+        not header Origin https://{$WORKBENCH_PUBLIC_IP}
+    }
+    @desktop {
+        method GET
+        path_regexp desktop ^/xpra/[a-f0-9]{64}/?$
+        header Connection *Upgrade*
+        header Upgrade websocket
+    }
+    route {
+        respond @badOrigin "Origin not allowed" 403
+        # Machine clients authenticate with a partner Bearer key. Preserve it,
+        # and constrain normalized upstream requests to the partner API.
+        @partnerApi path /v1 /v1/*
+        handle @partnerApi {
+            reverse_proxy 127.0.0.1:{$WORKBENCH_ADMIN_PORT:8790} {
+                header_up Host 127.0.0.1:{$WORKBENCH_ADMIN_PORT:8790}
+                header_up X-Symphony-Api-Only 1
+                header_up -Cookie
+            }
+        }
+        @partnerDocs {
+            method GET HEAD
+            path /partner-api/index.html /partner-api/reference.css /partner-api/openapi.json /partner-api/task.json /partner-api/client.py /partner-api/client.mjs /partner-api/webhook_verify.py
+        }
+        handle @partnerDocs {
+            reverse_proxy 127.0.0.1:{$WORKBENCH_ADMIN_PORT:8790} {
+                header_up Host 127.0.0.1:{$WORKBENCH_ADMIN_PORT:8790}
+                header_up -Authorization
+                header_up -Cookie
+                header_up -X-Symphony-Api-Only
+            }
+        }
+        # A native Xpra client cannot use a browser's login cookie. It must
+        # instead present a live 256-bit session capability issued after login.
+        handle @desktop {
+            uri strip_prefix /xpra
+            reverse_proxy 127.0.0.1:{$WORKBENCH_XPRA_PORT:6084} {
+                header_up Host 127.0.0.1:{$WORKBENCH_XPRA_PORT:6084}
+                header_up Origin http://127.0.0.1:{$WORKBENCH_XPRA_PORT:6084}
+                header_up -Authorization
+                header_up -Cookie
+            }
+        }
+        handle /xpra/* {
+            respond "Desktop session not found" 404
+        }
+        @signIn path /login /auth/login /auth/logout /auth/session /auth-assets/*
+        handle @signIn {
+            reverse_proxy 127.0.0.1:8791 {
+                header_up Host 127.0.0.1:8791
+                header_up X-Real-IP {remote_host}
+                header_up -Authorization
+            }
+        }
+        handle {
+            forward_auth 127.0.0.1:8791 {
+                uri /auth/verify
+                header_up Host 127.0.0.1:8791
+                header_up X-Real-IP {remote_host}
+                header_up -Authorization
+            }
+            reverse_proxy 127.0.0.1:{$WORKBENCH_ADMIN_PORT:8790} {
+                header_up Host 127.0.0.1:{$WORKBENCH_ADMIN_PORT:8790}
+                header_up Origin http://127.0.0.1:{$WORKBENCH_ADMIN_PORT:8790}
+                header_up -Authorization
+                header_up -Cookie
+            }
+        }
+    }
+}
+
+http://{$WORKBENCH_PUBLIC_IP} {
+    redir https://{$WORKBENCH_PUBLIC_IP}{uri} 308
+}

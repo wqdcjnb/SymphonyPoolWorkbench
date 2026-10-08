@@ -1,0 +1,61 @@
+name: symphony-pool-public-v2
+services:
+  public-auth:
+    image: symphony-workbench:pool-v2-20261004-rc4
+    entrypoint: ["/opt/node/bin/node", "--disable-warning=ExperimentalWarning", "/auth-service/server.mjs"]
+    network_mode: host
+    restart: unless-stopped
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    cpus: 1
+    mem_limit: 384m
+    environment:
+      AUTH_PUBLIC_ORIGIN: "https://${WORKBENCH_PUBLIC_IP:?Set WORKBENCH_PUBLIC_IP}"
+      AUTH_CREDENTIAL_FILE: /run/secrets/admin-credential.json
+      AUTH_DATABASE_FILE: /auth-data/sessions.sqlite
+      AUTH_PORT: "8791"
+    volumes:
+      - ./public-auth:/auth-service:ro
+      - /data/symphony/v2/public-auth/admin-credential.json:/run/secrets/admin-credential.json:ro
+      - /data/symphony/v2/public-auth/data:/auth-data
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    healthcheck:
+      test: ["CMD", "/opt/node/bin/node", "-e", "fetch('http://127.0.0.1:8791/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+  public-gateway:
+    image: caddy:2.11.4-alpine
+    network_mode: host
+    restart: unless-stopped
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    cpus: 1
+    mem_limit: 256m
+    depends_on:
+      public-auth:
+        condition: service_healthy
+    environment:
+      WORKBENCH_PUBLIC_IP: "${WORKBENCH_PUBLIC_IP:?Set WORKBENCH_PUBLIC_IP}"
+      WORKBENCH_ADMIN_PORT: "${WORKBENCH_ADMIN_PORT:-8790}"
+      WORKBENCH_XPRA_PORT: "${WORKBENCH_XPRA_PORT:-6084}"
+    volumes:
+      - ./Caddyfile.public-v2:/etc/caddy/Caddyfile:ro
+      - /data/symphony/v2/public-gateway/caddy-data:/data
+      - /data/symphony/v2/public-gateway/caddy-config:/config
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

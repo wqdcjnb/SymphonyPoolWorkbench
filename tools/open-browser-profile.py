@@ -13,19 +13,28 @@ import time
 
 from playwright.sync_api import sync_playwright
 
-from browser_runtime import generation_browser_options
-from desktop_routes import existing_session, process_identity, stop_file, write_session
+from browser_runtime import generation_browser_options, verify_egress
+from desktop_routes import existing_session, process_identity, profile_key, stop_file, write_session
 from login_desktop import LoginDesktop, desktop_result
+from login_diagnostics import attach_login_diagnostics
+from manual_login_browser import manual_login_enabled, serve_manual_browser
 
 
 URLS = {
     "tiktok": "https://ads.tiktok.com/creative/creativestudio/settings/credit",
     "doubao": "https://www.doubao.com/chat/",
+    "dola": "https://www.dola.com/chat/",
 }
 
 
 def status_code(error):
     text = str(error).lower()
+    if str(error) in ("EGRESS_CHECK_FAILED", "EGRESS_IP_MISMATCH",
+                      "MULTILOGIN_NOT_CONFIGURED", "MULTILOGIN_BUSY",
+                      "MULTILOGIN_AGENT_IN_USE",
+                      "MULTILOGIN_AGENT_FAILED", "MULTILOGIN_API_FAILED",
+                      "MULTILOGIN_ENDPOINT_NOT_READY", "MULTILOGIN_PROFILE_FAILED"):
+        return str(error)
     if "processsingleton" in text or "user data directory is already in use" in text:
         return "PROFILE_IN_USE"
     if str(error) == "INVALID_BROWSER_CHANNEL":
@@ -52,9 +61,35 @@ def running_browser_pid(profile, proc_root=Path("/proc"), hostname=None):
         return None
 
 
+def wait_for_browser(context, requested_stop):
+    """A closed tab must not close the other task or verification windows."""
+    while not requested_stop.exists():
+        pages = list(context.pages)
+        if not pages:
+            return 'all_windows_closed'
+        observed = pages[0]
+        try:
+            observed.wait_for_timeout(500)
+        except Exception:
+            remaining = [page for page in context.pages if not page.is_closed()]
+            if observed.is_closed() and remaining:
+                continue
+            if not remaining:
+                return 'all_windows_closed'
+            raise
+    return 'stop_requested'
+
+
 def serve_browser(args):
+    if os.environ.get("WORKBENCH_BROWSER_PROVIDER") == "multilogin":
+        from multilogin_browser import serve
+        serve(args, URLS[args.login_type])
+        return
+    if manual_login_enabled(args.desktop_root, args.login_type):
+        return serve_manual_browser(args, URLS[args.login_type], running_browser_pid)
     status = Path(args.status_file)
     ready = False
+    exit_reason = 'startup_failed'
 
     # Keep the default SIGTERM action. Closing the Playwright pipe tears down its browser;
     # raising inside a synchronous Playwright call can deadlock its event dispatcher.
@@ -62,10 +97,16 @@ def serve_browser(args):
         with sync_playwright() as playwright:
             context = playwright.chromium.launch_persistent_context(
                 args.profile, **generation_browser_options(), headless=False,
-                args=["--profile-directory=Default", "--window-size=1280,800"], timeout=20_000,
+                args=["--profile-directory=Default", "--window-size=1280,800",
+                      "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0"], timeout=20_000,
                 no_viewport=True, accept_downloads=False,
             )
             try:
+                attach_login_diagnostics(context, args.desktop_root, args.profile, args.login_type)
+                verify_egress(context)
+                credential = json.loads(os.environ.get("WORKBENCH_LOGIN_CREDENTIAL", "{}"))
+                if credential.get("cookies"):
+                    context.add_cookies(credential["cookies"])
                 # Startup is independent of platform network latency. Login errors remain visible.
                 write_session(status, {"ok": True, "browserPid": running_browser_pid(Path(args.profile))})
                 ready = True
@@ -74,13 +115,33 @@ def serve_browser(args):
                     page.goto(URLS[args.login_type], wait_until="commit", timeout=8_000)
                 except Exception:
                     pass
-                while context.pages and not stop_file(args.desktop_root, args.profile).exists():
-                    context.pages[0].wait_for_timeout(500)
+                # Fill only visible, unambiguous fields. Verification remains with the user.
+                if credential.get("identifier"):
+                    try:
+                        fields = page.locator('input[type="email"], input[type="tel"], input[name="email"], input[name="mobile"]')
+                        visible = [fields.nth(i) for i in range(fields.count()) if fields.nth(i).is_visible()]
+                        if len(visible) == 1:
+                            visible[0].fill(credential["identifier"])
+                        password = page.locator('input[type="password"]')
+                        if credential.get("password") and password.count() == 1 and password.is_visible():
+                            password.fill(credential["password"])
+                    except Exception:
+                        pass
+                exit_reason = wait_for_browser(context, stop_file(args.desktop_root, args.profile))
             finally:
                 context.close()
     except (Exception, KeyboardInterrupt) as error:
+        exit_reason = type(error).__name__
         if not ready:
             write_session(status, {"ok": False, "error": status_code(error)})
+    finally:
+        if ready:
+            try:
+                # Keep the previous exit cause after the next launch overwrites its log.
+                write_session(Path(args.desktop_root) / (profile_key(args.profile) + '.browser-exit.json'),
+                              {'at': int(time.time() * 1000), 'reason': exit_reason})
+            except OSError:
+                pass
 
 
 def launch(args):
@@ -91,7 +152,8 @@ def launch(args):
         return {"ok": False, "error": "PROFILE_LAUNCH_FAILED"}
 
 
-    generation_browser_options()  # Reject invalid channel before starting a child.
+    if os.environ.get("WORKBENCH_BROWSER_PROVIDER") != "multilogin":
+        generation_browser_options()  # Reject invalid channel before starting a child.
     session = existing_session(args.desktop_root, profile, args.account_id)
     if session:
         return desktop_result(session, True)
@@ -108,7 +170,8 @@ def launch(args):
             "--account-id", args.account_id, "--desktop-root", args.desktop_root,
         ], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             start_new_session=True, close_fds=True)
-        for _ in range(350):
+        limit = 4100 if os.environ.get("WORKBENCH_BROWSER_PROVIDER") == "multilogin" else 350
+        for _ in range(limit):
             if status.is_file():
                 try:
                     return json.loads(status.read_text(encoding="utf-8"))

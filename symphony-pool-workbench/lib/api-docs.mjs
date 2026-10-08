@@ -43,6 +43,7 @@ export function renderApiDocumentation({ baseUrl } = {}) {
     if (!["http:", "https:"].includes(base.protocol) || base.username || base.password
       || base.pathname !== "/v1" || base.search || base.hash) throw new Error("INVALID_DOCS_BASE_URL");
     source = source.replaceAll("http://127.0.0.1:8787/v1", base.href)
+      .replaceAll("https://47.84.3.74/v1", base.href)
       .replace("本机 API Base URL", "当前 API Base URL");
   }
   const lines = source.split(/\r?\n/);

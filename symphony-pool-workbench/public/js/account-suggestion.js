@@ -9,10 +9,11 @@ function ordinal(number) {
 }
 
 export function suggestAccount(accounts, loginType, workerId) {
-  const platform = loginType === "doubao" ? "doubao" : "symphony";
-  const prefix = `${String(workerId || "").trim()}-${platform}-`;
-  const used = new Set(accounts.map((account) => account.id));
-  const numbers = accounts.filter((account) => account.id.startsWith(prefix))
+  const platform = loginType === "doubao" ? "doubao" : loginType === "dola" ? "dola" : "symphony";
+  const node = String(workerId || "").trim();
+  const prefix = `${node ? `${node}-` : ''}${platform}-`;
+  const used = new Set(accounts.map((account) => account.id.toLowerCase()));
+  const numbers = accounts.filter((account) => account.id.toLowerCase().startsWith(prefix.toLowerCase()))
     .map((account) => account.id.slice(prefix.length))
     .filter((suffix) => /^\d+$/.test(suffix))
     .map(Number)
@@ -21,11 +22,11 @@ export function suggestAccount(accounts, loginType, workerId) {
   let id;
   do {
     id = `${prefix}${String(next).padStart(2, "0")}`;
-    if (!used.has(id)) break;
+    if (!used.has(id.toLowerCase())) break;
     next += 1;
   } while (true);
   const label = loginType === "doubao"
     ? `豆包${ordinal(next)}号账号`
-    : `Symphony TK ${ordinal(next)}号账号`;
+    : loginType === "dola" ? `Dola ${ordinal(next)}号账号` : `Symphony TK ${ordinal(next)}号账号`;
   return { id, label };
 }

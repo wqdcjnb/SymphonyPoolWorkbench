@@ -32,15 +32,15 @@ test("Linux account login invokes its configured launcher with the stored profil
   await new Promise(resolve => probe.listen(0, "127.0.0.1", resolve));
   const port = probe.address().port;
   await new Promise(resolve => probe.close(resolve));
-  const app = createWorkbenchServer({ port, workspaceRoot: root, databasePath: path.join(root, "test.sqlite"),
-    runtimePlatform: "linux", launcherPath: launcher, pythonExecutable: process.execPath, desktopPort: 6080 });
+  const app = (await createWorkbenchServer({ port, workspaceRoot: root, databasePath: path.join(root, "test.sqlite"),
+    runtimePlatform: "linux", launcherPath: launcher, pythonExecutable: process.execPath, desktopPort: 6080 }));
   try {
     await app.listen();
-    const account = app.store.listAccounts()[0];
+    const account = (await app.store.listAccounts())[0];
     const url = `http://127.0.0.1:${port}/api/accounts/${account.id}/open`;
     assert.equal((await fetch(url, { method: "POST" })).status, 202);
     const args = JSON.parse(fs.readFileSync(capture));
-    assert.deepEqual(args.slice(0, 7), ["--profile", account.profilePath, "--login-type", "tiktok", "--account-id", account.id, "--desktop-root"]);
+    assert.deepEqual(args.slice(0, 7), ["--profile", account.profilePath, "--login-type", "doubao", "--account-id", account.id, "--desktop-root"]);
     assert.equal(path.basename(args[7]), "login-desktops");
     const loginPage = await fetch(`http://127.0.0.1:${port}/accounts/${account.id}/login`);
     assert.equal(loginPage.status, 200);
@@ -88,7 +88,7 @@ test("Linux account login invokes its configured launcher with the stored profil
       const deletion = await fetch(url.replace(/\/open$/, ""), { method: "DELETE" });
       assert.equal(deletion.status, 409);
       assert.equal((await deletion.json()).error, "ACCOUNT_PROFILE_IN_USE");
-      assert.ok(app.store.getAccount(account.id));
+      assert.ok((await app.store.getAccount(account.id)));
     } finally { fs.writeFileSync(release, "continue"); }
     assert.equal((await opening).status, 202);
     assert.equal((await fetch(url.replace(/\/open$/, ""), { method: "DELETE" })).status, 200);

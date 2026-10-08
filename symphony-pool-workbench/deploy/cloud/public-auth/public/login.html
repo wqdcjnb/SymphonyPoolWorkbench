@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>登录 · Symphony 账号池工作台</title>
+  <link rel="icon" href="/auth-assets/mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/auth-assets/login.css">
+  <script src="/auth-assets/login.js" defer></script>
+</head>
+<body>
+  <main class="login-layout">
+    <section class="brand-panel" aria-label="Symphony 账号池工作台">
+      <a class="brand" href="/login" aria-label="Symphony 登录首页">
+        <img src="/auth-assets/mark.svg" width="40" height="40" alt="">
+        <span>Symphony<small>账号池工作台</small></span>
+      </a>
+      <div class="brand-story">
+        <p class="eyebrow"><span></span> YOUR ACCOUNTS, IN SYNC</p>
+        <h1>让每个账号，<br>有序协作<span class="period">。</span></h1>
+        <p class="brand-description">账号、登录状态与创作任务，<br>在一个工作台里井然有序。</p>
+        <div class="account-visual" aria-hidden="true">
+          <div class="orbit orbit-outer"></div><div class="orbit orbit-inner"></div>
+          <div class="orbit-point"></div>
+          <div class="platform-card card-doubao"><span class="platform-symbol doubao-symbol">豆</span><span>豆包<small>账号管理</small></span><i></i></div>
+          <div class="platform-card card-tiktok"><span class="platform-symbol tiktok-symbol">♪</span><span>TikTok<small>任务协作</small></span><i></i></div>
+          <div class="platform-card card-dola"><span class="platform-symbol dola-symbol">D</span><span>Dola<small>统一工作台</small></span><i></i></div>
+          <div class="visual-center"><img src="/auth-assets/mark.svg" width="46" height="46" alt=""></div>
+        </div>
+      </div>
+      <footer class="brand-footer"><span>一处管理 · 专注创作</span><span>SYMPHONY WORKSPACE</span></footer>
+    </section>
+
+    <section class="form-panel" aria-labelledby="signInTitle">
+      <div class="form-top"><span class="workspace-label"><span></span> 企业工作空间</span></div>
+      <div class="form-content">
+        <div class="welcome-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4M4 12h11m-4-4 4 4-4 4"/></svg></div>
+        <h2 id="signInTitle">欢迎回来</h2>
+        <p class="form-description">登录 Symphony，继续你的工作。</p>
+        <form id="loginForm" novalidate>
+          <div id="formMessage" class="form-message" role="alert" hidden></div>
+          <div class="field">
+            <label for="username">管理员账号</label>
+            <div class="input-wrap">
+              <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"/><path d="M5 20v-2a7 7 0 0 1 14 0v2"/></svg>
+              <input id="username" name="username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="请输入管理员账号" value="admin" maxlength="80" required>
+            </div>
+          </div>
+          <div class="field">
+            <label for="password">登录密码</label>
+            <div class="input-wrap">
+              <svg aria-hidden="true" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 5v2"/></svg>
+              <input id="password" name="password" type="password" autocomplete="current-password" placeholder="请输入登录密码" maxlength="512" required>
+              <button id="togglePassword" class="password-toggle" type="button" aria-label="显示密码" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/><path class="eye-slash" d="m3 3 18 18"/></svg></button>
+            </div>
+            <p id="capsLock" class="field-hint" hidden>大写锁定已开启</p>
+          </div>
+          <div class="form-options">
+            <label class="remember"><input type="checkbox" name="remember" id="remember"><span>保持登录 7 天</span></label>
+            <button id="helpButton" class="text-button" type="button" aria-expanded="false" aria-controls="passwordHelp">忘记密码？</button>
+          </div>
+          <p class="password-help" id="passwordHelp" hidden>请联系公司管理员获取或重置工作台密码。</p>
+          <button id="submitButton" class="submit-button" type="submit"><span class="spinner" aria-hidden="true"></span><span id="submitLabel">登录工作台</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6"/></svg></button>
+        </form>
+        <div class="form-divider"></div>
+        <p class="workspace-note"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6l8-3Z"/><path d="m8 12 3 3 5-6"/></svg>仅限获授权的团队成员访问</p>
+        <noscript><p class="form-message">请启用浏览器 JavaScript 后登录。</p></noscript>
+      </div>
+      <footer class="form-footer">Symphony · 账号池与任务管理</footer>
+    </section>
+  </main>
+</body>
+</html>

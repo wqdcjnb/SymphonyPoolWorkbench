@@ -52,6 +52,28 @@ class DesktopRoutesTests(unittest.TestCase):
             for token in (None, "", "../account-a", "f" * 64):
                 self.assertIsNone(plugin.lookup(token))
 
+    def test_switching_viewer_revokes_old_account_connection_without_stopping_its_browser(self):
+        a, b = self.session("account-a", 1), self.session("account-b", 2)
+        viewer = "c" * 64
+        a["viewerId"] = b["viewerId"] = viewer
+        (self.root / "viewers").mkdir()
+        for value in (a, b):
+            routes.write_session(self.root / "routes" / f"{value['token']}.json", value)
+        validate = routes.valid_session
+        with patch.object(routes, "valid_session", side_effect=lambda value: validate(value, self.proc)):
+            plugin = routes.DesktopRoutes(self.root)
+            selected = self.root / "viewers" / f"{viewer}.json"
+            routes.write_session(selected, {"accountId": "account-a", "token": a["token"]})
+            self.assertIsNotNone(plugin.lookup(a["token"]))
+            self.assertIsNone(plugin.lookup(b["token"]))
+            routes.write_session(selected, {"accountId": "account-b", "token": b["token"]})
+            self.assertIsNone(plugin.lookup(a["token"]))
+            self.assertIsNotNone(plugin.lookup(b["token"]))
+            self.assertTrue(routes.valid_session(a))
+            selected.unlink()
+            self.assertIsNone(plugin.lookup(b["token"]))
+            self.assertTrue(routes.valid_session(b))
+
     def test_reused_pid_or_port_cannot_resolve_to_another_account(self):
         a = self.session("account-a", 1)
         self.assertTrue(routes.valid_session(a, self.proc))
@@ -74,6 +96,22 @@ class DesktopRoutesTests(unittest.TestCase):
         for content in ("not json", "[]", "null", json.dumps({"version": 1})):
             (self.root / "routes" / f"{a['token']}.json").write_text(content)
             self.assertIsNone(routes.DesktopRoutes(self.root).lookup(a["token"]))
+
+    def test_mimic_supervisor_routes_only_its_own_xpra_desktop(self):
+        session = self.session("mimic-account", 3)
+        session["browserProvider"] = "multilogin"
+        browser_pid = session["browser"]["pid"]
+        args = ["python", "open-browser-profile.py", "--browser", "--profile", session["profile"],
+                "--account-id", session["accountId"]]
+        (self.proc / str(browser_pid) / "cmdline").write_bytes(
+            b"\0".join(os.fsencode(arg) for arg in args) + b"\0")
+        routes.write_session(self.root / "routes" / f"{session['token']}.json", session)
+        self.assertTrue(routes.valid_session(session, self.proc))
+        changed = deepcopy(session)
+        changed["accountId"] = "another-account"
+        self.assertFalse(routes.valid_session(changed, self.proc))
+        (self.proc / str(browser_pid) / "stat").unlink()
+        self.assertFalse(routes.valid_session(session, self.proc))
 
 
 if __name__ == "__main__":

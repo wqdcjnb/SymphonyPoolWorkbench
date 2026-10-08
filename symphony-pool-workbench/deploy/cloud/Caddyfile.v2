@@ -1,0 +1,38 @@
+{
+    admin off
+    auto_https off
+    servers {
+        protocols h1
+    }
+}
+
+http://:8080 {
+    @badHost not host 127.0.0.1 localhost
+    respond @badHost "Host not allowed" 403
+    @badOrigin {
+        header Origin *
+        not {
+            header Origin http://127.0.0.1:{$WORKBENCH_ADMIN_PORT:8790}
+            header Origin http://localhost:{$WORKBENCH_ADMIN_PORT:8790}
+        }
+    }
+    respond @badOrigin "Origin not allowed" 403
+    reverse_proxy 127.0.0.1:8787 {
+        header_up Host 127.0.0.1:8787
+        header_up Origin http://127.0.0.1:8787
+    }
+}
+
+http://:6083 {
+    @badHost not host 127.0.0.1 localhost
+    respond @badHost "Host not allowed" 403
+    @badOrigin {
+        header Origin *
+        not {
+            header Origin http://127.0.0.1:{$WORKBENCH_XPRA_PORT:6084}
+            header Origin http://localhost:{$WORKBENCH_XPRA_PORT:6084}
+        }
+    }
+    respond @badOrigin "Origin not allowed" 403
+    reverse_proxy 127.0.0.1:6080
+}

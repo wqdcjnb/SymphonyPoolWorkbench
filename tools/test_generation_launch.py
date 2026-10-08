@@ -10,6 +10,20 @@ from unittest.mock import MagicMock, patch
 
 
 class GenerationLaunchTests(unittest.TestCase):
+    def test_platform_rejection_finishes_waiting_without_sending_confirmation(self):
+        worker = run_path(str(Path(__file__).with_name('run-image-to-video.py')))
+        for done_only in [False, True]:
+            page = MagicMock()
+            page.url = 'https://www.doubao.com/chat/123'
+            page.get_by_role.return_value.is_visible.return_value = False
+            page.locator.return_value.count.return_value = 0
+            page.locator.return_value.all_text_contents.return_value = [
+                '这是豆包订阅标准套餐专属能力，开通标准套餐，我就能继续为你服务。']
+            with self.assertRaisesRegex(RuntimeError, 'DOUBAO_SUBSCRIPTION_REQUIRED'):
+                worker['wait_for_doubao_response'](page, done_only=done_only)
+            page.locator.return_value.click.assert_not_called()
+            page.wait_for_timeout.assert_not_called()
+
     def test_logout_redirect_is_not_mislabeled_as_generic_browser_failure(self):
         worker = run_path(str(Path(__file__).with_name("run-image-to-video.py")))
         page = MagicMock()
@@ -27,7 +41,7 @@ class GenerationLaunchTests(unittest.TestCase):
     def test_occupied_profile_is_reported_without_submitting_or_exposing_raw_browser_errors(self):
         worker = run_path(str(Path(__file__).with_name("run-image-to-video.py")))
         job = {"mode": "image_to_video", "service": "doubao", "model": "Seedance 2.0 Mini",
-               "durationSeconds": 5, "prompt": "test", "referenceAssets": [],
+               "durationSeconds": 15, "aspectRatio": "9:16", "prompt": "test", "referenceAssets": [],
                "profilePath": str(Path.cwd() / "fixture-profile"), "outputPath": "test.mp4"}
         for detail, code in (
             ("Opening in existing browser session.", "PROFILE_IN_USE"),

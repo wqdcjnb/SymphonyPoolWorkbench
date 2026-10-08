@@ -3,3 +3,6 @@ logs/
 .venv/
 .runtime/
 output/
+node_modules/
+
+.symphony-tasks/

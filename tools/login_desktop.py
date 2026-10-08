@@ -15,6 +15,9 @@ from desktop_routes import existing_session, process_identity, profile_key, stop
 
 def desktop_result(session, already_open=False):
     return {"ok": True, "alreadyOpen": already_open,
+            "manualBrowser": session.get("manualBrowser", False),
+            "browserProvider": session.get("browserProvider", "chrome"),
+            "endpointPort": session.get("endpointPort"),
             "desktop": {"protocol": "xpra", "accountId": session["accountId"], "token": session["token"]}}
 
 
@@ -43,6 +46,54 @@ class LoginDesktop:
 
     def healthy(self):
         return not self.stopping and all(child.poll() is None for child in self.children)
+
+    def start_input_method(self, temporary, env):
+        # A shared session bus would send input to another account's Fcitx instance.
+        # Keep the bus, configuration and learned input inside this login session.
+        for variable, directory in (("XDG_CONFIG_HOME", "config"),
+                                    ("XDG_DATA_HOME", "data"),
+                                    ("XDG_CACHE_HOME", "cache")):
+            path = temporary / directory
+            path.mkdir(mode=0o700)
+            env[variable] = str(path)
+        config = temporary / "config" / "fcitx5"
+        config.mkdir(mode=0o700)
+        (config / "profile").write_text(
+            "[Groups/0]\nName=Default\nDefault Layout=us\nDefaultIM=pinyin\n"
+            "\n[Groups/0/Items/0]\nName=keyboard-us\nLayout=\n"
+            "\n[Groups/0/Items/1]\nName=pinyin\nLayout=\n"
+            "\n[GroupOrder]\n0=Default\n", encoding="utf-8")
+        (config / "config").write_text(
+            "[Hotkey/TriggerKeys]\n0=Control+Shift+space\n1=Control+space\n2=F8\n"
+            "\n[Behavior]\nActiveByDefault=False\nShareInputState=No\n",
+            encoding="utf-8")
+        env.update(GTK_IM_MODULE="fcitx", QT_IM_MODULE="fcitx", XMODIFIERS="@im=fcitx")
+        # XIM requires a UTF-8 locale even when the UI language remains English.
+        env["LC_CTYPE"] = "C.UTF-8"
+        bus = temporary / "bus"
+        env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={bus}"
+        self.spawn(["dbus-daemon", "--session", "--nofork", "--nopidfile",
+                    f"--address={env['DBUS_SESSION_BUS_ADDRESS']}"], env, "dbus")
+        for _ in range(50):
+            if not self.healthy():
+                raise RuntimeError("Input method bus exited")
+            if bus.exists():
+                break
+            time.sleep(0.1)
+        else:
+            raise RuntimeError("Input method bus startup timed out")
+        self.spawn(["fcitx5", "--disable=wayland,waylandim,notificationitem,kimpanel"], env, "input-method")
+        for _ in range(50):
+            if not self.healthy():
+                raise RuntimeError("Input method exited")
+            ready = subprocess.run(["dbus-send", "--session", "--print-reply", "--reply-timeout=500",
+                "--dest=org.freedesktop.DBus", "/org/freedesktop/DBus",
+                "org.freedesktop.DBus.NameHasOwner", "string:org.fcitx.Fcitx5"],
+                env=env, capture_output=True, text=True, timeout=2)
+            if ready.returncode == 0 and "boolean true" in ready.stdout:
+                return
+            time.sleep(0.1)
+        raise RuntimeError("Input method startup timed out")
 
     def cleanup(self):
         # Withdraw the connection before releasing any port/display for another account.
@@ -142,22 +193,27 @@ class LoginDesktop:
             time.sleep(0.1)
         else:
             raise RuntimeError("Xpra startup timed out")
+        self.start_input_method(temporary, env)
         browser_status = temporary / "browser.json"
         self.browser = self.spawn([*browser_command, "--desktop-root", str(self.root),
                                    "--status-file", str(browser_status)], env, "browser")
-        for _ in range(230):
-            if not self.healthy():
-                raise RuntimeError("Browser exited")
+        limit = 3900 if env.get("WORKBENCH_BROWSER_PROVIDER") == "multilogin" else 230
+        for _ in range(limit):
             if browser_status.exists():
                 result = json.loads(browser_status.read_text(encoding="utf-8"))
                 if not result.get("ok"):
                     write_session(status_file, result)
                     return
                 break
+            if not self.healthy():
+                raise RuntimeError("Browser exited")
             time.sleep(0.1)
         else:
             raise RuntimeError("Browser startup timed out")
         session = {"version": 2, "token": secrets.token_hex(32), "accountId": self.account_id,
+            "manualBrowser": result.get("manualBrowser", False),
+            "browserProvider": result.get("browserProvider", "chrome"),
+            "endpointPort": result.get("endpointPort"),
             "profile": self.profile, "display": display, "port": port,
             "manager": process_identity(os.getpid()), "browser": process_identity(result["browserPid"]),
             "xpra": process_identity(xpra.pid), "xvfb": process_identity(xvfb.pid)}

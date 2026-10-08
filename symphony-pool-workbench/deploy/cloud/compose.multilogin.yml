@@ -1,0 +1,16 @@
+# Optional overlay. Build and use only after a local automation token is present.
+services:
+  workbench:
+    image: symphony-workbench-mimic:${SYMPHONY_RELEASE:?Set SYMPHONY_RELEASE}
+    build:
+      context: ../../..
+      dockerfile: symphony-pool-workbench/deploy/cloud/Dockerfile.multilogin
+      args:
+        SYMPHONY_RELEASE: ${SYMPHONY_RELEASE:?Set SYMPHONY_RELEASE}
+        MULTILOGIN_AGENT_SHA256: ${MULTILOGIN_AGENT_SHA256:?Set Multilogin package checksum}
+    environment:
+      WORKBENCH_MULTILOGIN_AGENT: /usr/bin/mlx
+      WORKBENCH_MULTILOGIN_TOKEN_FILE: /run/secrets/multilogin-token
+    volumes:
+      - /data/symphony/v2/secrets/multilogin-token:/run/secrets/multilogin-token:ro
+      - /data/symphony/v2/multilogin:/home/workbench/mlx

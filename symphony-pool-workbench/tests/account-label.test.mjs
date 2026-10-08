@@ -17,8 +17,8 @@ async function freePort() {
 test("account ID and name edits preserve the browser profile and job links", async () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "account-label-test-"));
   const port = await freePort();
-  const app = createWorkbenchServer({ port, workspaceRoot: tempRoot,
-    databasePath: path.join(tempRoot, "test.sqlite") });
+  const app = (await createWorkbenchServer({ port, workspaceRoot: tempRoot,
+    databasePath: path.join(tempRoot, "test.sqlite") }));
   try {
     await app.listen();
     const base = `http://127.0.0.1:${port}`;
@@ -40,23 +40,23 @@ test("account ID and name edits preserve the browser profile and job links", asy
     assert.equal(renamed.id, created.id);
     assert.equal(renamed.profilePath, created.profilePath);
     assert.equal(renamed.loginType, created.loginType);
-    assert.equal(app.store.getAccount(created.id).label, "新名称");
-    assert.equal(app.store.listEvents().find((event) => event.eventType === "account.label_updated")?.accountId,
+    assert.equal((await app.store.getAccount(created.id)).label, "新名称");
+    assert.equal((await app.store.listEvents()).find((event) => event.eventType === "account.label_updated")?.accountId,
       created.id);
 
     fs.mkdirSync(created.profilePath);
     fs.writeFileSync(path.join(created.profilePath, "profile-marker.txt"), "session stays here");
-    const job = app.store.createDraftJob({
+    const job = (await app.store.createDraftJob({
       idempotencyKey: "account-rename-draft", accountId: created.id,
-      mode: "image_to_video", model: "auto", durationSeconds: 5,
+      mode: "image_to_video", model: "auto", durationSeconds: 15,
       prompt: "测试账号关联", referenceAssets: [], priority: 50,
-    });
+    }));
     const duplicateResponse = await fetch(`${base}/api/accounts/${created.id}`, {
       method: "PATCH", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ accountId: "xzkj-pc-01-symphony-01", label: "冲突" }),
+      body: JSON.stringify({ accountId: "xzkj-pc-01-doubao-01", label: "冲突" }),
     });
     assert.equal(duplicateResponse.status, 409);
-    assert.equal(app.store.getAccount(created.id).label, "新名称");
+    assert.equal((await app.store.getAccount(created.id)).label, "新名称");
     assert.ok(fs.existsSync(created.profilePath));
 
     const newId = "pc-doubao-03";
@@ -68,7 +68,7 @@ test("account ID and name edits preserve the browser profile and job links", asy
     });
     assert.equal(occupiedResponse.status, 409);
     assert.ok(fs.existsSync(created.profilePath));
-    assert.equal(app.store.getAccount(created.id).label, "新名称");
+    assert.equal((await app.store.getAccount(created.id)).label, "新名称");
     fs.rmdirSync(occupiedProfilePath);
 
     const movedResponse = await fetch(`${base}/api/accounts/${created.id}`, {
@@ -81,21 +81,21 @@ test("account ID and name edits preserve the browser profile and job links", asy
     assert.equal(moved.label, "三号账号");
     assert.equal(moved.loginType, created.loginType);
     assert.equal(moved.workerId, created.workerId);
-    assert.equal(app.store.getAccount(created.id), null);
-    assert.equal(app.store.getAccount(newId).profilePath, moved.profilePath);
+    assert.equal((await app.store.getAccount(created.id)), null);
+    assert.equal((await app.store.getAccount(newId)).profilePath, moved.profilePath);
     assert.equal(fs.existsSync(created.profilePath), false);
     assert.equal(fs.readFileSync(path.join(moved.profilePath, "profile-marker.txt"), "utf8"),
       "session stays here");
-    assert.equal(app.store.getJob(job.id).accountId, newId);
-    assert.equal(app.store.getJob(job.id).requestedAccountId, newId);
-    assert.ok(app.store.listEvents().filter((event) => event.accountId === newId).length >= 3);
+    assert.equal((await app.store.getJob(job.id)).accountId, newId);
+    assert.equal((await app.store.getJob(job.id)).requestedAccountId, newId);
+    assert.ok((await app.store.listEvents()).filter((event) => event.accountId === newId).length >= 3);
 
     const invalidResponse = await fetch(`${base}/api/accounts/${newId}`, {
       method: "PATCH", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ label: "   " }),
     });
     assert.equal(invalidResponse.status, 400);
-    assert.equal(app.store.getAccount(newId).label, "三号账号");
+    assert.equal((await app.store.getAccount(newId)).label, "三号账号");
     const missingResponse = await fetch(`${base}/api/accounts/missing-account`, {
       method: "PATCH", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ label: "新名称" }),
@@ -110,10 +110,10 @@ test("account ID and name edits preserve the browser profile and job links", asy
 test("renaming the initial account does not recreate its old ID on restart", async () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "account-default-rename-"));
   const databasePath = path.join(tempRoot, "test.sqlite");
-  const oldId = "xzkj-pc-01-symphony-01";
+  const oldId = "xzkj-pc-01-doubao-01";
   const newId = "pc-symphony-main";
   const port = await freePort();
-  const app = createWorkbenchServer({ port, workspaceRoot: tempRoot, databasePath });
+  const app = (await createWorkbenchServer({ port, workspaceRoot: tempRoot, databasePath }));
   try {
     await app.listen();
     const response = await fetch(`http://127.0.0.1:${port}/api/accounts/${oldId}`, {
@@ -121,16 +121,16 @@ test("renaming the initial account does not recreate its old ID on restart", asy
       body: JSON.stringify({ accountId: newId, label: "主账号" }),
     });
     assert.equal(response.status, 200);
-    assert.equal(app.store.getAccount(oldId), null);
+    assert.equal((await app.store.getAccount(oldId)), null);
   } finally {
     await app.close();
   }
-  const reopened = createWorkbenchServer({ port: await freePort(), workspaceRoot: tempRoot,
-    databasePath });
+  const reopened = (await createWorkbenchServer({ port: await freePort(), workspaceRoot: tempRoot,
+    databasePath }));
   try {
-    assert.equal(reopened.store.getAccount(oldId), null);
-    assert.equal(reopened.store.getAccount(newId).label, "主账号");
-    assert.equal(reopened.store.listAccounts().length, 1);
+    assert.equal((await reopened.store.getAccount(oldId)), null);
+    assert.equal((await reopened.store.getAccount(newId)).label, "主账号");
+    assert.equal((await reopened.store.listAccounts()).length, 1);
   } finally {
     await reopened.close();
     fs.rmSync(tempRoot, { recursive: true, force: true });

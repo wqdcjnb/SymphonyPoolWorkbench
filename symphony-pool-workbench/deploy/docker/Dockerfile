@@ -41,6 +41,18 @@ RUN curl --fail --location --retry 3 https://xpra.org/xpra.asc -o /usr/share/key
        python3-gi-cairo python3-dbus dbus-x11 x11-xkb-utils libx264-164 \
     && rm -rf /var/lib/apt/lists/*
 
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      fcitx5 fcitx5-pinyin fcitx5-frontend-gtk3 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY symphony-pool-workbench/requirements-video.txt /tmp/requirements-video.txt
+RUN /opt/venv/bin/pip install --no-cache-dir -r /tmp/requirements-video.txt
+
+COPY symphony-pool-workbench/package.json symphony-pool-workbench/package-lock.json /app/symphony-pool-workbench/
+RUN cd /app/symphony-pool-workbench && npm ci --omit=dev --ignore-scripts
 COPY symphony-pool-workbench /app/symphony-pool-workbench
 COPY tools /app/tools
 RUN python3 -c "from pathlib import Path; [p.write_bytes(p.read_bytes().replace(b'\r\n', b'\n')) for p in Path('/app').rglob('*.sh')]" \

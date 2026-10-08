@@ -3,21 +3,29 @@ import { lookup } from "node:dns/promises";
 import { BlockList, isIP } from "node:net";
 import https from "node:https";
 import http from "node:http";
+import { readFileSync } from "node:fs";
+import { VIDEO_CATALOG } from '../public/js/video-policy.js';
+import { mentionsThirtySeconds, THIRTY_SECOND_MODEL, resolvePromptRatio } from './prompt-policy.mjs';
 
 export const DAY = 86_400_000;
-export const MODELS = [
-  { model: "Seedance 2.0 Fast", version: "2.0 Fast", durations: [5, 10], ratios: ["9:16", "16:9"], max_images: 9 },
-  { model: "Seedance 2.0 Mini", version: "2.0 Mini", durations: [5, 10], ratios: ["9:16", "16:9"], max_images: 9 },
-  { model: "Video 1.5 Pro", version: "1.5 Pro", durations: [5, 10, 12], ratios: ["9:16"], max_images: 4 },
-];
+export const MODELS = VIDEO_CATALOG.map(item => ({ model: item.model, version: item.version,
+  durations: [item.duration], ratios: item.ratios, max_images: item.maxImages,
+  credits_per_video: item.credits, daily_credits: 10,
+  ...(item.service === 'dola' ? { delivery_modes: ['watermark_repair'],
+    note: '支持文字与参考图片生成；局部修补并重新编码后交付，水印区域可能模糊。' } : {}) }));
 export const ERRORS = {
   INVALID_PARAMETER: [400, "参数缺失、类型错误或超出范围"],
+  PROMPT_RATIO_CONFLICT: [422, "提示词包含多个不同的视频比例，请只保留一个目标比例"],
+  PROMPT_RATIO_UNSUPPORTED: [422, "提示词中的视频比例暂不支持；当前支持 1:1、3:4、4:3、9:16、16:9、21:9"],
   INVALID_API_KEY: [401, "API Key 缺失或无效"],
   TASK_NOT_FOUND: [404, "任务不存在"],
   NOT_FOUND: [404, "接口不存在"],
   METHOD_NOT_ALLOWED: [405, "请求方法不支持"],
   ID_CONFLICT: [409, "client_task_id 已用于不同的参数或图片"],
   RESULT_NOT_READY: [409, "该视频尚无可下载结果"],
+  WATERMARK_FREE_RESULT_REQUIRED: [409, "未获得已验证的无水印原片，暂不提供视频下载"],
+  WATERMARK_REPAIR_FAILED: [409, "视频局部修补或完整性校验失败，暂不提供该文件"],
+  WATERMARK_REPAIR_UNSUPPORTED_LAYOUT: [409, "平台原片尺寸与已验收的水印修补规则不匹配，需服务方核对"],
   RESULT_EXPIRED: [410, "视频文件已超过保留期"],
   RESULT_MISSING: [410, "视频文件已不可用"],
   UPLOAD_TOO_LARGE: [413, "图片或请求体超过限制"],
@@ -47,26 +55,37 @@ export const signature = (secret, value) => createHmac("sha256", secret).update(
 export const isTaskId = (value) => /^task-[a-f0-9-]{36}$/.test(value);
 
 export function configurePartnerApi(input = {}, port = 8787) {
-  const apiKey = input.apiKey ?? process.env.PARTNER_API_KEY ?? "";
-  const downloadSecret = input.downloadSecret ?? process.env.PARTNER_DOWNLOAD_SECRET ?? "";
-  const webhookSecret = input.webhookSecret ?? process.env.PARTNER_WEBHOOK_SECRET ?? "";
+  const configFile = input.configFile ?? process.env.PARTNER_CONFIG_FILE;
+  let saved = {};
+  if (configFile) {
+    try {
+      saved = JSON.parse(readFileSync(configFile, "utf8").replace(/^\uFEFF/, ""));
+      const allowed = new Set(["apiKey", "downloadSecret", "webhookSecret", "baseUrl", "callbackUrls", "defaultCallbackUrl"]);
+      if (!saved || Array.isArray(saved) || typeof saved !== "object"
+        || Object.keys(saved).some(key => !allowed.has(key))) throw new Error();
+    } catch { throw new Error("INVALID_PARTNER_CONFIG_FILE"); }
+  }
+  const apiKey = input.apiKey ?? saved.apiKey ?? process.env.PARTNER_API_KEY ?? "";
+  const downloadSecret = input.downloadSecret ?? saved.downloadSecret ?? process.env.PARTNER_DOWNLOAD_SECRET ?? "";
+  const webhookSecret = input.webhookSecret ?? saved.webhookSecret ?? process.env.PARTNER_WEBHOOK_SECRET ?? "";
   for (const value of [apiKey, downloadSecret, webhookSecret]) {
     if (value && (typeof value !== "string" || Buffer.byteLength(value) < 32 || value.length > 512 || /\s/.test(value))) {
       throw new Error("PARTNER_SECRET_MUST_HAVE_32_TO_512_NONSPACE_CHARACTERS");
     }
   }
-  const base = new URL(input.baseUrl ?? process.env.PARTNER_PUBLIC_BASE_URL ?? `http://127.0.0.1:${port}/v1`);
+  const base = new URL(input.baseUrl ?? saved.baseUrl ?? process.env.PARTNER_PUBLIC_BASE_URL ?? `http://127.0.0.1:${port}/v1`);
   if ((base.protocol !== "https:" && !(base.protocol === "http:" && ["127.0.0.1", "localhost"].includes(base.hostname)))
     || base.username || base.password || base.search || base.hash || base.pathname.replace(/\/$/, "") !== "/v1") {
     throw new Error("INVALID_PARTNER_PUBLIC_BASE_URL");
   }
   const config = { apiKey, downloadSecret, webhookSecret, baseUrl: base.href.replace(/\/$/, ""),
     enabled: Boolean(apiKey && downloadSecret), allowLocalCallbacks: input.allowLocalCallbacks === true,
-    callbackUrls: input.callbackUrls ?? (process.env.PARTNER_CALLBACK_URLS || "").split(",").map((s) => s.trim()).filter(Boolean),
-    defaultCallbackUrl: input.defaultCallbackUrl ?? process.env.PARTNER_DEFAULT_CALLBACK_URL ?? "",
+    callbackUrls: input.callbackUrls ?? saved.callbackUrls ?? (process.env.PARTNER_CALLBACK_URLS || "").split(",").map((s) => s.trim()).filter(Boolean),
+    defaultCallbackUrl: input.defaultCallbackUrl ?? saved.defaultCallbackUrl ?? process.env.PARTNER_DEFAULT_CALLBACK_URL ?? "",
     intervalMs: input.intervalMs ?? 1_000, requestsPerMinute: input.requestsPerMinute ?? 300,
-    maxPendingTasks: input.maxPendingTasks ?? 100 };
-  if (![config.intervalMs, config.requestsPerMinute, config.maxPendingTasks].every((value) => Number.isSafeInteger(value) && value > 0)
+    maxPendingTasks: input.maxPendingTasks ?? 1000,
+    maxQueuedIntakes: input.maxQueuedIntakes ?? 200, intakeWaitMs: input.intakeWaitMs ?? 30_000 };
+  if (![config.intervalMs, config.requestsPerMinute, config.maxPendingTasks, config.maxQueuedIntakes, config.intakeWaitMs].every((value) => Number.isSafeInteger(value) && value > 0)
     || config.intervalMs < 25 || !Array.isArray(config.callbackUrls)) throw new Error("INVALID_PARTNER_CONFIGURATION");
   config.callbackUrls = config.callbackUrls.map((url) => normalizeCallback(url, config));
   if (config.defaultCallbackUrl) config.defaultCallbackUrl = validateCallback(config.defaultCallbackUrl, config);
@@ -90,11 +109,14 @@ export function validateCallback(value, config) {
 }
 
 export function validateTask(body, imageCount, config) {
-  const allowed = new Set(["client_task_id", "model", "duration", "ratio", "count", "prompt", "negative_prompt", "callback_url"]);
+  const allowed = new Set(["client_task_id", "model", "duration", "ratio", "count", "prompt", "negative_prompt", "callback_url", "delivery_mode"]);
   if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).some((key) => !allowed.has(key))) {
     throw new PartnerError("INVALID_PARAMETER");
   }
-  const { client_task_id, model, duration, ratio, count = 1, prompt, negative_prompt = "", callback_url } = body;
+  const { client_task_id, count = 1, prompt, negative_prompt = "", callback_url } = body;
+  let { model, duration, ratio } = body;
+  let deliveryMode = body.delivery_mode ?? 'official_original';
+  if (!['official_original', 'watermark_repair'].includes(deliveryMode)) throw new PartnerError('INVALID_PARAMETER');
   if (typeof client_task_id !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(client_task_id)
     || typeof model !== "string" || !Number.isInteger(duration) || typeof ratio !== "string"
     || !Number.isInteger(count) || count < 1 || count > 100 || typeof prompt !== "string"
@@ -102,13 +124,24 @@ export function validateTask(body, imageCount, config) {
     || [...negative_prompt].length > 2_000 || (callback_url !== undefined && typeof callback_url !== "string")) {
     throw new PartnerError("INVALID_PARAMETER");
   }
+  if (mentionsThirtySeconds(prompt, negative_prompt)) {
+    model = THIRTY_SECOND_MODEL;
+    duration = 30;
+    deliveryMode = 'watermark_repair';
+  }
+  try { ratio = resolvePromptRatio(prompt, ratio); }
+  catch (error) { throw new PartnerError(error.message); }
   const selected = MODELS.find((item) => item.model === model);
   if (!selected || !selected.durations.includes(duration) || !selected.ratios.includes(ratio)
     || imageCount > selected.max_images) throw new PartnerError("UNSUPPORTED_COMBINATION");
+  if (!(selected.delivery_modes || ['official_original']).includes(deliveryMode)) {
+    throw new PartnerError('UNSUPPORTED_COMBINATION', 'Dola 须显式选择 delivery_mode=watermark_repair；其他模型使用 official_original');
+  }
   // The browser adapter has a UTF-16 prompt bound in addition to these public character limits.
   if (prompt.length + negative_prompt.length + 32 > 12_000) throw new PartnerError("INVALID_PARAMETER", "提示词总长度超过执行器限制");
   return { client_task_id, model, duration, ratio, count, prompt: prompt.trim(),
     negative_prompt: negative_prompt.trim(),
+    ...(deliveryMode === 'watermark_repair' ? { delivery_mode: deliveryMode } : {}),
     callback_url: validateCallback(callback_url ?? config.defaultCallbackUrl, config) };
 }
 
@@ -160,7 +193,11 @@ export async function readTaskRequest(request, config) {
     throw new PartnerError("INVALID_PARAMETER", "请求体或 multipart 格式无效");
   }
   const payload = validateTask(body, images.length, config);
-  return { payload, images, hash: digest(JSON.stringify({ payload, images: images.map((file) => file.sha256) })) };
+  const hashPayload = (value) => digest(JSON.stringify({ payload: value, images: images.map((file) => file.sha256) }));
+  // A retry of a task accepted before prompt precedence must return that original task.
+  const legacyRatioHash = ['9:16', '16:9'].includes(body.ratio) && body.ratio !== payload.ratio
+    ? hashPayload({ ...payload, ratio: body.ratio }) : undefined;
+  return { payload, images, hash: hashPayload(payload), legacyRatioHash };
 }
 
 const blocked = new BlockList();

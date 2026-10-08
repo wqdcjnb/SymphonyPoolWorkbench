@@ -16,27 +16,49 @@ APP = "symphony-pool-workbench"
 FILES = (
     "README.md", ".gitignore", ".gitattributes", ".dockerignore",
     f"{APP}/deploy/docker/Dockerfile", f"{APP}/deploy/docker/Caddyfile",
+    *(f"{APP}/deploy/cloud/{name}" for name in (
+        "Caddyfile.v2", "Caddyfile.public-v2",
+        "prepare-public-v2.py", "init-v2-storage.py", "symphony-v2-backup.timer",
+    )),
     *(f"{APP}/{name}" for name in (
-        "README.md", "CHANGELOG.md", "PARTNER_API.md", "VIDEO_API.md",
-        "NOCSNOW_API.md", "package.json", "requirements.txt", ".env.example",
+        "PARTNER_API.md", "package.json", "package-lock.json", "requirements.txt", "requirements-video.txt", ".env.example",
         ".gitignore", "server.mjs", "start-workbench.ps1", "stop-workbench.ps1",
     )),
     *(f"tools/{name}" for name in (
         "build-release.py", "open-symphony-profile.ps1", "run-image-to-video.py",
-        "verify-doubao-profile.py", "verify-symphony-profile.py",
+        "verify-doubao-profile.py", "verify-symphony-profile.py", "verify-dola-profile.py", "dola_video.py", "test_dola_video.py", "video_compat.py", "video_ratios.py", "test_video_compat.py",
         "test_verify_symphony_profile.py", "test_verification_launch.py",
         "browser_runtime.py", "open-browser-profile.py", "test_browser_runtime.py",
+        "task_pages.py", "test_task_pages.py", "test_task_pages_browser.py",
+        "task_messages.py", "test_task_messages.py",
+        "test_context_restart.py",
+        "joint_submission.py", "joint_submission.js", "test_joint_submission.py",
+        "dola_prompt.py", "test_dola_prompt.py",
         "desktop_routes.py", "login_desktop.py", "test_desktop_routes.py", "test_login_desktop.py",
+        "login_diagnostics.py", "test_login_diagnostics.py",
+        "manual_login_browser.py", "test_manual_login_browser.py",
+        "doubao_parameters.py", "test_doubao_parameters.py",
+        "doubao_upload.py", "test_doubao_upload.py",
+        "doubao_duration.py", "doubao_duration.js", "test_doubao_duration.py",
+        "doubao_challenge.py", "inspect_doubao_task.py", "test_doubao_recovery.py",
+        "doubao_export.py", "test_doubao_export.py",
+        "watermark_repair.py", "test_watermark_repair.py",
+        "dola_watermark_tracker.py", "dola-logo-mask.png", "test_dola_watermark_tracker.py",
+        "inspect_dola_task.py", "test_dola_recovery.py", "test_partner_client.py",
+        "stream_media.py", "check-egress.py", "login-action.py", "login_assist.py", "test_login_assist.py", "test_login_input_method.py",
         "xpra_gateway.py", "test_xpra_gateway.py", "fixtures/xpra-input.html",
-        "test_generation_launch.py", "test_verification_launch.py",
+        "test_generation_launch.py",
         "start-docker-test.ps1", "allow-docker-lan.ps1", "configure-xpra-client.ps1",
         "win-xpra-launcher.cs", "test-xpra-client.ps1",
     )),
 )
+FILES += (f"{APP}/docs/examples/partner-client.py", f"{APP}/docs/examples/partner-webhook-verify.py")
+FILES += (f"{APP}/public/partner-api/client.py", f"{APP}/public/partner-api/webhook_verify.py")
+FILES += (f"{APP}/tests/fixtures/phones.doc", f"{APP}/tests/fixtures/phones.docx")
 DIRECTORIES = tuple(f"{APP}/{name}" for name in (
     "lib", "public", "views", "tests", "scripts", "docs", "deploy",
 ))
-EXTENSIONS = {".mjs", ".js", ".css", ".html", ".svg", ".json", ".md", ".txt", ".sh", ".service", ".example", ".yml", ".ps1"}
+EXTENSIONS = {".mjs", ".js", ".css", ".html", ".svg", ".json", ".md", ".txt", ".sh", ".service", ".example", ".yml", ".ps1", ".csv"}
 BLOCKED_PARTS = {
     ".git", ".venv", ".env", ".migration-backups", "__pycache__",
     "node_modules", "data", "logs", "output", "backups", "release", ".runtime", ".docker-local",

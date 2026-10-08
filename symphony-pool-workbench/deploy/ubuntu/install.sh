@@ -18,7 +18,7 @@ printf 'Detected Ubuntu %s, CPU %s, browser %s, Node.js %s\n' "$VERSION_ID" "$NO
 if [[ "${1:-}" == --check ]]; then exit 0; fi
 if [[ $# -gt 0 ]]; then echo 'Usage: bash install.sh [--check]' >&2; exit 1; fi
 if [[ $EUID -eq 0 ]]; then
-  echo 'Run as a normal user with sudo access, not root. See docs/UBUNTU.md.' >&2
+  echo 'Run as a normal user with sudo access, not root. See ../README.md.' >&2
   exit 1
 fi
 if [[ ! -w "$APP_ROOT" ]]; then echo 'The current user must own the extracted project directory.' >&2; exit 1; fi
@@ -93,4 +93,4 @@ fi
 chmod 600 "$APP_ROOT/data/desktop.Xauthority"
 printf '\nInstallation prepared. Install the Xpra native client on your Windows computer.\n'
 printf '\nThen start the service:\n  systemctl --user daemon-reload\n  systemctl --user enable --now symphony-workbench.service\n  sudo loginctl enable-linger "%s"\n' "$(id -un)"
-echo 'See docs/UBUNTU.md for SSH access, API configuration, and acceptance checks.'
+echo 'See ../README.md for access, API configuration, and acceptance checks.'

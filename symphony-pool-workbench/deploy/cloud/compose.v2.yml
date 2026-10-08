@@ -1,0 +1,95 @@
+name: symphony-pool-v2
+services:
+  postgres:
+    image: postgres:18.6-bookworm
+    restart: unless-stopped
+    shm_size: 256mb
+    mem_limit: 4g
+    cpus: 2
+    environment:
+      POSTGRES_USER: symphony
+      POSTGRES_DB: symphony
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres-password
+    command: ["postgres", "-c", "max_connections=150", "-c", "shared_buffers=1GB"]
+    volumes:
+      - /data/symphony/v2/postgres:/var/lib/postgresql
+      - /data/symphony/v2/secrets/postgres-password:/run/secrets/postgres-password:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U symphony -d symphony"]
+      interval: 5s
+      retries: 12
+  workbench:
+    image: symphony-workbench:${SYMPHONY_RELEASE:?Set SYMPHONY_RELEASE}
+    build:
+      context: ../../..
+      dockerfile: symphony-pool-workbench/deploy/docker/Dockerfile
+    hostname: symphony-cloud-01
+    init: true
+    entrypoint: ["/bin/bash", "/usr/local/bin/symphony-cloud-entrypoint"]
+    restart: unless-stopped
+    stop_grace_period: 90s
+    shm_size: 4gb
+    cpus: 12
+    mem_limit: 48g
+    security_opt: ["no-new-privileges:true"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      WORKBENCH_HOST: 127.0.0.1
+      WORKBENCH_PORT: "8787"
+      WORKBENCH_DESKTOP_PORT: "${WORKBENCH_XPRA_PORT:-6084}"
+      WORKBENCH_WORKER_ID: "${WORKBENCH_WORKER_ID:-cloud-sg-01}"
+      WORKBENCH_MAX_CONCURRENT_JOBS: "${WORKBENCH_MAX_CONCURRENT_JOBS:-10}"
+      WORKBENCH_GLOBAL_LIMIT: "100"
+      WORKBENCH_MANAGED_SESSIONS: "1"
+      WORKBENCH_REQUIRE_GROUPS: "1"
+      WORKBENCH_REQUIRE_PROXY_FOR_NEW_ACCOUNTS: "1"
+      WORKBENCH_REQUIRE_MIMIC_FOR_NEW_ACCOUNTS: "1"
+      WORKBENCH_SEED_ACCOUNT: "0"
+      WORKBENCH_KEY_FILE: /run/secrets/vault-key
+      DATABASE_URL_FILE: /run/secrets/database-url
+      PARTNER_CONFIG_FILE: /run/secrets/partner-config.json
+      PARTNER_PUBLIC_BASE_URL: https://47.84.3.74/v1
+    ports:
+      - "127.0.0.1:${WORKBENCH_ADMIN_PORT:-8790}:8080"
+      - "127.0.0.1:${WORKBENCH_XPRA_PORT:-6084}:6083"
+    volumes:
+      - /data/symphony/v2/data:/app/symphony-pool-workbench/data
+      - /data/symphony/v2/profiles:/profiles
+      - /data/symphony/v2/secrets/vault-key:/run/secrets/vault-key:ro
+      - /data/symphony/v2/secrets/database-url:/run/secrets/database-url:ro
+      - /data/symphony/v2/secrets/partner-config.json:/run/secrets/partner-config.json:ro
+      - ./entrypoint.sh:/usr/local/bin/symphony-cloud-entrypoint:ro
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/api/pool').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+  gateway:
+    image: caddy:2.11.4-alpine
+    network_mode: service:workbench
+    restart: unless-stopped
+    depends_on:
+      workbench:
+        condition: service_healthy
+        restart: true
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    environment:
+      XDG_DATA_HOME: /tmp/caddy-data
+      XDG_CONFIG_HOME: /tmp/caddy-config
+      WORKBENCH_ADMIN_PORT: "${WORKBENCH_ADMIN_PORT:-8790}"
+      WORKBENCH_XPRA_PORT: "${WORKBENCH_XPRA_PORT:-6084}"
+    volumes:
+      - ./Caddyfile.v2:/etc/caddy/Caddyfile:ro
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 6

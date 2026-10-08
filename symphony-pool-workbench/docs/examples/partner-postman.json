@@ -1,0 +1,183 @@
+{
+  "info": {
+    "name": "Symphony 视频 API v1",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "先配置 apiKey；先确认已验收模型，再手动提交任务。Dola 须显式选择 watermark_repair，接受局部模糊和重新编码。不要直接运行整个集合。"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://47.84.3.74/v1"
+    },
+    {
+      "key": "apiKey",
+      "value": ""
+    },
+    {
+      "key": "taskId",
+      "value": ""
+    },
+    {
+      "key": "clientTaskId",
+      "value": "replace_with_unique_business_id"
+    }
+  ],
+  "item": [
+    {
+      "name": "01 获取模型目录",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{apiKey}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/models",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "models"
+          ]
+        }
+      }
+    },
+    {
+      "name": "02 创建一条任务（确认模型可用后执行）",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{apiKey}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/videos",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "videos"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"client_task_id\": \"{{clientTaskId}}\",\n  \"model\": \"Dreamina Seedance 2.5\",\n  \"delivery_mode\": \"watermark_repair\",\n  \"duration\": 30,\n  \"ratio\": \"9:16\",\n  \"count\": 1,\n  \"prompt\": \"海边日落，镜头缓慢向前推进，保持主体外观一致\",\n  \"negative_prompt\": \"不要文字、水印、画面闪烁和肢体变形\",\n  \"callback_url\": \"\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if ([200,202].includes(pm.response.code)) { const data=pm.response.json(); if(data.task_id) pm.collectionVariables.set('taskId', data.task_id); }"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 查询累计结果",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{apiKey}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/videos/{{taskId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "videos",
+            "{{taskId}}"
+          ]
+        }
+      }
+    },
+    {
+      "name": "04 下载第一条交付视频",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{apiKey}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/videos/{{taskId}}/results/1",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "videos",
+            "{{taskId}}",
+            "results",
+            "1"
+          ]
+        }
+      }
+    },
+    {
+      "name": "05 取消未提交的条目",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{apiKey}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/videos/{{taskId}}/cancel",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "videos",
+            "{{taskId}}",
+            "cancel"
+          ]
+        }
+      }
+    },
+    {
+      "name": "06 获取 OpenAPI",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{apiKey}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/openapi.json",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "openapi.json"
+          ]
+        }
+      }
+    }
+  ]
+}

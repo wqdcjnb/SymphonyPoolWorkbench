@@ -3,24 +3,40 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>账号登录 · Symphony</title>
+  <title>账号浏览器 · Symphony</title>
   <link rel="stylesheet" href="/styles.css">
-  <script type="module" src="/js/account-login.js?v=1.3.0-xpra-handler6"></script>
+  <script type="module" src="/js/account-login.js?v=2.0.0-resident-launcher"></script>
 </head>
 <body>
   <main>
-    <p class="kicker">ACCOUNT LOGIN</p>
-    <h1>用 Xpra 登录账号</h1>
+    <p class="kicker">ACCOUNT BROWSER</p>
+    <h1>账号浏览器</h1>
+    <p class="subtitle">登录后持续在服务器后台运行。每次只连接你选中的账号，切换或收起窗口时保留其他浏览器。</p>
+    <label for="loginAccountPicker">选择要查看的账号</label>
+    <select id="loginAccountPicker" aria-label="选择要查看的账号"><option value="">正在读取账号…</option></select>
+    <p id="residentState" class="field-note" role="status"></p>
     <p id="loginAccount" class="subtitle"></p>
+    <p id="loginIdentity" class="subtitle"></p>
+    <div class="account-actions"><button id="copyLoginPhone" class="button ghost small" hidden>复制登录手机号</button><a id="manageLoginIdentity" class="text-button" href="/pool">管理此账号登录资料</a></div>
     <p id="loginStatus" role="status">正在准备此账号的独立界面，请稍候…</p>
+    <section id="loginRecovery" class="job-item" hidden>
+      <h2>继续视频任务</h2>
+      <p id="recoveryStatus" role="status" aria-live="polite">请在该账号的 Chrome 窗口完成验证，再点击下方按钮。</p>
+      <div class="account-actions">
+        <button id="loginResume" class="button primary" type="button">验证完成，继续任务</button>
+        <a class="button ghost" href="/jobs">查看任务进度</a>
+      </div>
+      <p class="field-note">点击后会核对原平台任务并接回生成和下载。出现“生成中”或“保存视频中”表示已恢复；仍显示待验证时，需要继续在平台处理。</p>
+    </section>
     <section id="loginActions" hidden>
       <div class="account-actions">
-        <a id="loginNative" class="button primary" href="#">直接打开 Xpra</a>
+        <a id="loginNative" class="button primary" href="#">查看当前账号</a>
         <a id="loginDownload" class="button ghost" href="#" download>下载连接文件</a>
-        <button id="loginFinish" class="button ghost" type="button">登录完成，结束窗口</button>
+        <button id="loginFinish" class="button ghost" type="button">完成登录并保留在线</button>
+        <button id="loginDetach" class="button ghost" type="button">收起查看窗口</button>
       </div>
-      <p class="subtitle">首次使用请先安装 <a href="https://github.com/Xpra-org/xpra/wiki/Download#Microsoft-Windows" target="_blank" rel="noopener noreferrer">Xpra Windows 客户端</a>。每个账号打开自己的独立窗口。</p>
-      <p class="subtitle">仅断开 Xpra 连接会保留浏览器。完成登录后，请点击“登录完成，结束窗口”，再返回账号池验收。</p>
+      <p class="subtitle">首次使用请先安装 <a href="https://github.com/Xpra-org/xpra/wiki/Download#Microsoft-Windows" target="_blank" rel="noopener noreferrer">Xpra Windows 客户端</a>。切换账号会断开此前的查看连接；浏览器继续在服务器运行。</p>
+      <p class="subtitle">视频任务的验证请使用上方“验证完成，继续任务”。不需要查看时点击“收起查看窗口”。使用最新版工作台启动器或本页新下载的连接文件时，Xpra 窗口右上角“×”只断开查看，云端 Chrome 会保留；请勿在 Chrome 菜单中选择“退出”或关闭原任务标签页。</p>
     </section>
     <button id="loginRetry" class="button primary" hidden>重新打开</button>
     <a class="text-button" href="/accounts">返回账号池</a>

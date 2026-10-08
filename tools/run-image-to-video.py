@@ -1,3 +1,6 @@
+from stream_media import download_video
+from browser_runtime import persistent_context
+from dola_video import run_dola
 """Execute one authorized video generation job in an isolated browser profile.
 
 Receives a JSON job on stdin and emits small JSON status lines on stdout. Never
@@ -5,6 +8,7 @@ prints cookies, prompts, page text, or signed media URLs.
 """
 
 import json
+from contextlib import suppress
 import re
 import sys
 import time
@@ -14,6 +18,17 @@ from urllib.parse import parse_qs, urlparse
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 from browser_runtime import generation_browser_options, profile_in_use_error
+from doubao_parameters import confirmation_matches, video_prompt, select_ratio, response_state, prepare_video_confirmation
+from video_ratios import VIDEO_RATIOS, VIDEO_FIXED_RATIOS
+from joint_submission import install_joint_submission, confirm_joint_submission
+from doubao_export import export_original
+from doubao_duration import (select_base_duration, install_duration_submission,
+                             confirm_duration_submission, verify_result_duration)
+from doubao_challenge import check_human_verification
+from doubao_upload import open_video_composer, wait_for_image_attachments
+from doubao_parameters import VIDEO_PARAMS_PANEL
+from task_pages import job_page, remember_page, begin_submission, assert_conversation, finish_page, can_restart_context, restart_context
+from task_messages import bind_message, assistant_texts, scoped_locator, check_context_limit
 
 
 DOUBAO_CREATE = "https://www.doubao.com/chat/create-image"
@@ -26,12 +41,22 @@ def emit(stage: str, **fields: object) -> None:
 
 
 def verify_job(job: dict) -> None:
+    if job.get("collectOnly") and not job.get("collectExistingUrl"):
+        raise RuntimeError("COLLECTION_REMOTE_URL_REQUIRED")
     images = job.get("referenceAssets") or []
+    if not job.get("collectExistingUrl"):
+        supported = {"doubao": (("Seedance 2.0 Fast", "Seedance 2.0 Mini"), 15, 9),
+                     "dola": (("Dreamina Seedance 2.5",), 30, 9)}
+        spec = supported.get(job.get("service"))
+        ratios = VIDEO_FIXED_RATIOS
+        if (not spec or job.get("model") not in spec[0] or job.get("durationSeconds") != spec[1]
+                or job.get("aspectRatio") not in ratios or len(images) > spec[2]):
+            raise RuntimeError("INVALID_JOB_PARAMETERS")
     reference_mode = job.get("mode") == "reference_to_video"
     if not 0 <= len(images) <= (4 if job["service"] == "symphony" else 9):
         raise RuntimeError("INVALID_REFERENCE_IMAGE_COUNT")
     ratio = job.get("aspectRatio") or "auto"
-    if ratio not in ("auto", "3:4", "4:3", "9:16", "16:9", "1:1", "21:9"):
+    if ratio not in VIDEO_RATIOS:
         raise RuntimeError("INVALID_ASPECT_RATIO")
     if job["service"] == "symphony" and ratio not in ("auto", "9:16"):
         raise RuntimeError("INVALID_ASPECT_RATIO")
@@ -42,7 +67,7 @@ def verify_job(job: dict) -> None:
                 raise RuntimeError("REFERENCE_IMAGE_NOT_FOUND")
     if job["mode"] not in ("image_to_video", "reference_to_video"):
         raise RuntimeError("INVALID_JOB")
-    if job["service"] not in ("doubao", "symphony"):
+    if job["service"] not in ("doubao", "symphony", "dola"):
         raise RuntimeError("INVALID_SERVICE")
     if reference_mode:
         if job["service"] != "doubao" or job["model"] != "Seedance 2.0 Fast":
@@ -57,6 +82,8 @@ def verify_job(job: dict) -> None:
 
 
 def platform_prompt(job: dict) -> str:
+    if job["service"] == "doubao":
+        return video_prompt(job)
     positive = job["prompt"].strip()
     negative = (job.get("negativePrompt") or "").strip()
     return f"{positive}\n\n请避免出现：{negative}" if negative else positive
@@ -68,88 +95,115 @@ def doubao_logged_out(page) -> bool:
                 page.get_by_role("button", name="登录", exact=True).is_visible())
 
 
-def wait_for_doubao_task(page, timeout_seconds=90) -> str:
+def wait_for_doubao_task(page, timeout_seconds=90, context=None, job=None) -> str:
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
+        check_context_limit(page,job,'doubao')
         parsed = urlparse(page.url)
-        if parsed.hostname == "www.doubao.com" and re.fullmatch(r"/chat/\d+", parsed.path):
+        if (parsed.hostname == "www.doubao.com" and re.fullmatch(r"/chat/\d+", parsed.path)
+                and (not job or bind_message(context,page,job,'doubao'))):
             return page.url.split("?", 1)[0]
         if doubao_logged_out(page):
             # The click happened, but no durable platform task ID was acknowledged.
             # Keep this distinct from a safe, pre-submission LOGIN_REQUIRED failure.
             raise RuntimeError("LOGIN_EXPIRED_DURING_SUBMISSION")
+        check_human_verification(page)
         page.wait_for_timeout(500)
     raise RuntimeError("DOUBAO_SUBMISSION_UNCONFIRMED")
 
 
-def save_doubao_video(context, page, output_path: Path) -> None:
-    try:
-        page.get_by_text("你的视频生成好了。", exact=False).wait_for(timeout=600_000)
-    except PlaywrightTimeoutError as error:
-        raise RuntimeError("DOUBAO_GENERATION_TIMEOUT") from error
-    card = page.locator('[class*="block-video-"]').last
+def wait_for_doubao_response(page, timeout_seconds=180, done_only=False, after_assistant_count=0, job=None):
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        check_human_verification(page)
+        if doubao_logged_out(page):
+            raise RuntimeError('LOGIN_EXPIRED_DURING_SUBMISSION')
+        if job:
+            assert_conversation(page, job, 'doubao')
+        replies = assistant_texts(page,job,'doubao')
+        check_context_limit(page,job,'doubao',texts=replies)
+        state = response_state(replies[after_assistant_count:])
+        if state == 'subscription':
+            raise RuntimeError('DOUBAO_SUBSCRIPTION_REQUIRED')
+        if state == 'quota':
+            raise RuntimeError('DOUBAO_FREE_QUOTA_EXHAUSTED')
+        if done_only and state == 'confirm':
+            raise RuntimeError('DOUBAO_CONFIRMATION_REQUIRED')
+        if state == 'done' or (state and not done_only):
+            return state
+        page.wait_for_timeout(500)
+    raise RuntimeError('DOUBAO_GENERATION_TIMEOUT' if done_only else 'DOUBAO_RESPONSE_TIMEOUT')
+
+
+def save_doubao_video(context, page, output_path: Path, timeout_seconds=600, duration_seconds=None, job=None) -> None:
+    wait_for_doubao_response(page, timeout_seconds=timeout_seconds, done_only=True, job=job)
+    card = scoped_locator(page,job,'doubao','[class*="block-video-"]').last
     card.wait_for(timeout=20_000)
+    if job:
+        assert_conversation(page, job, 'doubao')
     emit("collecting")
     card.click()
-    video = page.locator("video").first
-    video.wait_for(state="attached", timeout=30_000)
-    page.wait_for_function("() => [...document.querySelectorAll('video')].some(v => v.currentSrc)", timeout=30_000)
-    media_url = video.evaluate("v => v.currentSrc || v.src")
-    host = urlparse(media_url).hostname or ""
-    if urlparse(media_url).scheme != "https" or not (host == "doubao.com" or host.endswith(".doubao.com")):
-        raise RuntimeError("UNEXPECTED_MEDIA_HOST")
-    response = context.request.get(media_url, timeout=180_000)
-    media = response.body()
-    if response.status != 200 or "video/mp4" not in response.headers.get("content-type", "") or media[4:8] != b"ftyp":
-        raise RuntimeError("VIDEO_DOWNLOAD_FAILED")
-    if len(media) > 500_000_000:
-        raise RuntimeError("VIDEO_TOO_LARGE")
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output_path.with_suffix(".part")
-    temporary.write_bytes(media)
-    temporary.replace(output_path)
+    export_original(context, page, output_path, downloader=download_video)
+    if duration_seconds is not None:
+        verify_result_duration(output_path, duration_seconds)
     emit("success", resultPath=str(output_path))
 
 
 def run_doubao(context, job: dict, output_path: Path) -> None:
-    page = context.new_page()
+    page = job_page(context, job, 'doubao')
+    while True:
+        try:
+            _run_doubao_page(context, page, job, output_path)
+            finish_page(context, page, job, 'doubao')
+            return
+        except Exception as error:
+            if str(error)=='CONVERSATION_CONTEXT_LIMIT' and can_restart_context(job,'doubao'):
+                emit('conversation_restart',code='CONVERSATION_CONTEXT_LIMIT')
+                page=restart_context(context,job,'doubao')
+                continue
+            if str(error) == 'DOUBAO_HUMAN_VERIFICATION_REQUIRED' and hasattr(context, 'preserve_page'):
+                page.bring_to_front()
+            raise
+
+
+def _run_doubao_page(context, page, job: dict, output_path: Path) -> None:
     remote_url = job.get("collectExistingUrl")
     if remote_url:
         parsed = urlparse(remote_url)
         if parsed.scheme != "https" or parsed.hostname != "www.doubao.com" or not re.fullmatch(r"/chat/\d+", parsed.path):
             raise RuntimeError("INVALID_REMOTE_URL")
-        page.goto(remote_url, wait_until="domcontentloaded", timeout=60_000)
-        save_doubao_video(context, page, output_path)
+        check_human_verification(page)
+        if doubao_logged_out(page):
+            raise RuntimeError("LOGIN_REQUIRED")
+        assert_conversation(page, job, 'doubao')
+        save_doubao_video(context, page, output_path, timeout_seconds=job.get('collectionCheckSeconds', 600),
+                          duration_seconds=job['durationSeconds'], job=job)
         return
 
-    page.goto(DOUBAO_CREATE, wait_until="domcontentloaded", timeout=60_000)
-    page.get_by_text("视频", exact=True).first.click(timeout=30_000)
+    if job.get('reuseConversation'):
+        assert_conversation(page,job,'doubao')
+    open_video_composer(page, job)
     page.get_by_text("模型", exact=True).first.locator("..").click(timeout=15_000)
     selected = page.get_by_text(job["model"], exact=True).last
     if "升级" in selected.locator("..").inner_text(timeout=5_000):
         raise RuntimeError("MODEL_REQUIRES_UPGRADE")
     selected.click(timeout=15_000)
 
-    page.locator('[data-input-engine-actionbar-render-entry-key="creation-video-generation-params-panel"]').click(timeout=15_000)
-    slider = page.get_by_role("slider").first
-    slider.focus()
-    slider.press("Home")
-    for _ in range(1 if job["durationSeconds"] == 5 else 6):
-        slider.press("ArrowRight")
-    expected = "1" if job["durationSeconds"] == 5 else "6"
-    if slider.get_attribute("aria-valuenow") != expected:
-        raise RuntimeError("DURATION_SELECTION_FAILED")
+    page.locator(VIDEO_PARAMS_PANEL).click(timeout=15_000)
+    select_base_duration(page)
     aspect_ratio = job.get("aspectRatio") or "auto"
-    if aspect_ratio != "auto":
-        page.get_by_role("button", name=aspect_ratio, exact=True).click(timeout=15_000)
-        selected_parameters = page.locator('[data-input-engine-actionbar-render-entry-key="creation-video-generation-params-panel"]')
-        if aspect_ratio not in selected_parameters.inner_text(timeout=5_000):
-            raise RuntimeError("ASPECT_RATIO_SELECTION_FAILED")
+    select_ratio(page, aspect_ratio)
 
+    install_duration_submission(page, job)
+    install_joint_submission(page, {**job, 'service': 'doubao'}, platform_prompt(job))
     attachments = [*job["referenceAssets"]]
     if job["mode"] == "reference_to_video":
         attachments.append(job["referenceVideo"])
-    if attachments:
+    if job['mode'] == 'image_to_video' and attachments:
+        # The + picker already uploaded these files. Model/ratio changes must
+        # retain every attachment before the full prompt can be submitted.
+        wait_for_image_attachments(page, len(attachments))
+    elif attachments:
         upload = page.locator('[data-testid="upload-file-input"]')
         if job["mode"] == "reference_to_video" and ".mp4" not in (upload.get_attribute("accept") or ""):
             raise RuntimeError("REFERENCE_VIDEO_MODEL_UNAVAILABLE")
@@ -164,12 +218,13 @@ def run_doubao(context, job: dict, output_path: Path) -> None:
             arg={"images": len(job["referenceAssets"]), "videos": 1 if job["mode"] == "reference_to_video" else 0},
             timeout=120_000,
         )
-    page.locator('[contenteditable="true"]').first.fill(platform_prompt(job))
+    page.locator('[data-testid="chat_input"] [contenteditable="true"]').first.fill(platform_prompt(job))
     if doubao_logged_out(page):
         raise RuntimeError("LOGIN_REQUIRED")
     send = page.locator('[data-testid="chat_input_send_button"]')
     if not send.is_enabled():
         raise RuntimeError("SUBMIT_NOT_READY")
+    begin_submission(context, page, job, 'doubao')
     emit("submitting")
     send.click()
     try:
@@ -178,34 +233,40 @@ def run_doubao(context, job: dict, output_path: Path) -> None:
     except PlaywrightTimeoutError:
         pass
 
-    remote_url = wait_for_doubao_task(page)
-    emit("submitted", remoteUrl=remote_url)
-    try:
-        platform_state = page.wait_for_function(
-            """() => {
-                const messages = [...document.querySelectorAll('[data-testid="message_content"]')]
-                    .map(message => message.innerText);
-                if (messages.some(message => /(?:免费次数|生成次数|免费额度|剩余额度|次数).{0,12}(?:用完|用尽|耗尽|不足)/.test(message))) return 'quota';
-                if (messages.some(message => message.includes('你的视频生成好了。'))) return 'done';
-                if (messages.some(message => message.includes('视频生成参数确认'))) return 'confirm';
-                if (messages.some(message => message.includes('视频生成好后'))) return 'auto';
-                return false;
-            }""",
-            timeout=180_000,
-        ).json_value()
-    except PlaywrightTimeoutError as error:
-        raise RuntimeError("DOUBAO_RESPONSE_TIMEOUT") from error
-    if platform_state == "quota":
-        raise RuntimeError("DOUBAO_FREE_QUOTA_EXHAUSTED")
+    confirm_joint_submission(page, {**job, 'service': 'doubao'})
+    duration_submissions = confirm_duration_submission(page)
+    check_human_verification(page)
+    remote_url = wait_for_doubao_task(page,context=context,job=job)
+    emit("submitted", remoteUrl=remote_url,remoteMessageId=job.get('remoteMessageId'))
+    job['remoteUrl'] = remote_url
+    remember_page(context, page, job, 'doubao', remote_url)
+    platform_state = wait_for_doubao_response(page, job=job)
     if platform_state == "confirm":
-        confirmation = page.get_by_text("视频生成参数确认", exact=False)
-        confirmation_text = confirmation.locator('xpath=ancestor::*[@data-testid="message_content"][1]').inner_text(timeout=10_000)
-        if job["model"] not in confirmation_text or f'{job["durationSeconds"]} 秒' not in confirmation_text:
-            raise RuntimeError("PLATFORM_PARAMETERS_MISMATCH")
+        confirmation = scoped_locator(page,job,'doubao','[data-testid="message_content"]').filter(
+            has_text="视频生成参数确认").last
+        deadline = time.monotonic() + 60
+        while not confirmation_matches(confirmation.inner_text(timeout=10_000), job):
+            assert_conversation(page, job, 'doubao')
+            check_context_limit(page,job,'doubao')
+            if response_state(assistant_texts(page,job,'doubao')) == 'subscription':
+                raise RuntimeError('DOUBAO_SUBSCRIPTION_REQUIRED')
+            check_human_verification(page)
+            if doubao_logged_out(page):
+                raise RuntimeError("LOGIN_EXPIRED_DURING_SUBMISSION")
+            if time.monotonic() >= deadline:
+                raise RuntimeError("PLATFORM_PARAMETERS_MISMATCH")
+            page.wait_for_timeout(500)
+        prepare_video_confirmation(page, job)
         page.locator('[data-testid="chat_input"] [contenteditable="true"]').first.fill("确认生成")
+        previous_replies = len(assistant_texts(page,job,'doubao'))
         page.locator('[data-testid="chat_input_send_button"]').click()
+        confirm_joint_submission(page, {**job, 'service': 'doubao'})
+        confirm_duration_submission(page, previous_count=duration_submissions)
+        platform_state = wait_for_doubao_response(page, after_assistant_count=previous_replies, job=job)
+        if platform_state == 'confirm':
+            raise RuntimeError('DOUBAO_CONFIRMATION_UNCONFIRMED')
     emit("generating")
-    save_doubao_video(context, page, output_path)
+    save_doubao_video(context, page, output_path, duration_seconds=job['durationSeconds'], job=job)
 
 
 def tiktok_task_ids(page) -> set[str]:
@@ -224,29 +285,6 @@ def tiktok_task_url(task_id: str) -> str:
 
 
 def save_tiktok_video(page, output_path: Path) -> None:
-    media: dict[str, bytes] = {}
-
-    def capture(response) -> None:
-        host = urlparse(response.url).hostname or ""
-        if not (host == "tiktokcdn-row.com" or host.endswith(".tiktokcdn-row.com")):
-            return
-        if "video/mp4" not in response.headers.get("content-type", ""):
-            return
-        try:
-            body = response.body()
-            byte_range = response.headers.get("content-range", "")
-            match = re.fullmatch(r"bytes 0-(\d+)/(\d+)", byte_range)
-            complete = response.status == 200 or (
-                response.status == 206 and match and int(match.group(1)) + 1 == int(match.group(2)) == len(body)
-            )
-            if complete and body[4:8] == b"ftyp" and len(body) <= 500_000_000:
-                media[response.url] = body
-                while len(media) > 10:
-                    media.pop(next(iter(media)))
-        except Exception:
-            pass
-
-    page.on("response", capture)
     for _ in range(60):
         page.reload(wait_until="domcontentloaded", timeout=60_000)
         try:
@@ -259,18 +297,11 @@ def save_tiktok_video(page, output_path: Path) -> None:
             preview = page.locator("video").last
             preview.evaluate("video => video.play().catch(() => {})")
             media_url = preview.evaluate("video => video.currentSrc || video.src")
-            for _ in range(6):
-                if media_url in media:
-                    break
-                page.wait_for_timeout(2_000)
-            if media_url in media:
-                emit("collecting")
-                output_path.parent.mkdir(parents=True, exist_ok=True)
-                temporary = output_path.with_suffix(".part")
-                temporary.write_bytes(media[media_url])
-                temporary.replace(output_path)
-                emit("success", resultPath=str(output_path))
-                return
+            emit("collecting")
+            download_video(page.context, media_url, output_path, ["tiktokcdn-row.com"])
+            emit("success", resultPath=str(output_path))
+            return
+
         except PlaywrightTimeoutError:
             if page.get_by_text("Failed", exact=True).count():
                 raise RuntimeError("PLATFORM_GENERATION_FAILED")
@@ -355,7 +386,7 @@ def main() -> int:
         output = Path(job["outputPath"])
         with sync_playwright() as playwright:
             launching_browser = True
-            context = playwright.chromium.launch_persistent_context(
+            context = persistent_context(playwright,
                 job["profilePath"], **generation_browser_options(), headless=False,
                 accept_downloads=True, viewport={"width": 1440, "height": 900},
             )
@@ -363,10 +394,15 @@ def main() -> int:
             try:
                 if job["service"] == "doubao":
                     run_doubao(context, job, output)
+                elif job["service"] == "dola":
+                    run_dola(context, job, output, emit)
                 else:
                     run_tiktok(context, job, output)
             finally:
-                context.close()
+                # A crashed browser may also fail to close. Keep the original
+                # collection error instead of replacing it with a generic one.
+                with suppress(Exception):
+                    context.close()
         return 0
     except Exception as error:
         code = "PROFILE_IN_USE" if profile_in_use_error(error, job.get("profilePath")) else str(error)

@@ -2,13 +2,13 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Symphony 号池视频生成 API",
-    "version": "1.0.0",
-    "description": "共享 Bearer Key；异步任务；每批最多 2 条；图片与任务一起上传。此 API 经本地浏览器号池执行。"
+    "version": "1.5.2",
+    "description": "共享 Bearer Key；异步任务；每批最多 2 条。Dola 须选择 watermark_repair，修补并重新编码后交付；角落可能模糊，不是官方无水印原片。其他模型仍使用原片校验。"
   },
   "servers": [
     {
-      "url": "http://127.0.0.1:8787/v1",
-      "description": "本机联调；公网 HTTPS 域名待配置"
+      "url": "https://47.84.3.74/v1",
+      "description": "云端 HTTPS 接口；需要专用 Bearer Key"
     }
   ],
   "security": [
@@ -83,7 +83,7 @@
             }
           },
           "409": {
-            "description": "ID_CONFLICT: client_task_id 已用于不同的参数或图片；RESULT_NOT_READY: 该视频尚无可下载结果",
+            "description": "ID_CONFLICT: client_task_id 已用于不同的参数或图片；RESULT_NOT_READY: 该视频尚无可下载结果；WATERMARK_FREE_RESULT_REQUIRED: 未获得已验证的无水印原片，暂不提供视频下载；WATERMARK_REPAIR_FAILED: 视频局部修补或完整性校验失败，暂不提供该文件；WATERMARK_REPAIR_UNSUPPORTED_LAYOUT: 平台原片尺寸与已验收的水印修补规则不匹配，需服务方核对",
             "content": {
               "application/json": {
                 "schema": {
@@ -133,7 +133,7 @@
             }
           },
           "422": {
-            "description": "UNSUPPORTED_COMBINATION: 模型、时长、比例或图片数量组合不支持；CALLBACK_NOT_ALLOWED: 回调地址未在服务端登记",
+            "description": "PROMPT_RATIO_CONFLICT: 提示词包含多个不同的视频比例，请只保留一个目标比例；PROMPT_RATIO_UNSUPPORTED: 提示词中的视频比例暂不支持；当前支持 1:1、3:4、4:3、9:16、16:9、21:9；UNSUPPORTED_COMBINATION: 模型、时长、比例或图片数量组合不支持；CALLBACK_NOT_ALLOWED: 回调地址未在服务端登记",
             "content": {
               "application/json": {
                 "schema": {
@@ -204,11 +204,12 @@
                 "$ref": "#/components/schemas/TaskRequest"
               },
               "example": {
-                "client_task_id": "order_20260930_0001",
-                "model": "Seedance 2.0 Mini",
-                "duration": 5,
+                "client_task_id": "order_20261004_0001",
+                "model": "Dreamina Seedance 2.5",
+                "delivery_mode": "watermark_repair",
+                "duration": 30,
                 "ratio": "9:16",
-                "count": 4,
+                "count": 1,
                 "prompt": "海边日落，镜头缓慢向前推进，保持主体外观一致",
                 "negative_prompt": "不要文字、水印、画面闪烁和肢体变形",
                 "callback_url": ""
@@ -225,7 +226,7 @@
                   "task": {
                     "type": "string",
                     "description": "TaskRequest 的 JSON 字符串",
-                    "example": "{\"client_task_id\":\"order_20260930_0001\",\"model\":\"Seedance 2.0 Mini\",\"duration\":5,\"ratio\":\"9:16\",\"count\":4,\"prompt\":\"海边日落，镜头缓慢向前推进，保持主体外观一致\",\"negative_prompt\":\"不要文字、水印、画面闪烁和肢体变形\",\"callback_url\":\"\"}"
+                    "example": "{\"client_task_id\":\"order_20261004_0001\",\"model\":\"Dreamina Seedance 2.5\",\"delivery_mode\":\"watermark_repair\",\"duration\":30,\"ratio\":\"9:16\",\"count\":1,\"prompt\":\"海边日落，镜头缓慢向前推进，保持主体外观一致\",\"negative_prompt\":\"不要文字、水印、画面闪烁和肢体变形\",\"callback_url\":\"\"}"
                   },
                   "images": {
                     "type": "array",
@@ -321,7 +322,7 @@
             }
           },
           "409": {
-            "description": "ID_CONFLICT: client_task_id 已用于不同的参数或图片；RESULT_NOT_READY: 该视频尚无可下载结果",
+            "description": "ID_CONFLICT: client_task_id 已用于不同的参数或图片；RESULT_NOT_READY: 该视频尚无可下载结果；WATERMARK_FREE_RESULT_REQUIRED: 未获得已验证的无水印原片，暂不提供视频下载；WATERMARK_REPAIR_FAILED: 视频局部修补或完整性校验失败，暂不提供该文件；WATERMARK_REPAIR_UNSUPPORTED_LAYOUT: 平台原片尺寸与已验收的水印修补规则不匹配，需服务方核对",
             "content": {
               "application/json": {
                 "schema": {
@@ -371,7 +372,7 @@
             }
           },
           "422": {
-            "description": "UNSUPPORTED_COMBINATION: 模型、时长、比例或图片数量组合不支持；CALLBACK_NOT_ALLOWED: 回调地址未在服务端登记",
+            "description": "PROMPT_RATIO_CONFLICT: 提示词包含多个不同的视频比例，请只保留一个目标比例；PROMPT_RATIO_UNSUPPORTED: 提示词中的视频比例暂不支持；当前支持 1:1、3:4、4:3、9:16、16:9、21:9；UNSUPPORTED_COMBINATION: 模型、时长、比例或图片数量组合不支持；CALLBACK_NOT_ALLOWED: 回调地址未在服务端登记",
             "content": {
               "application/json": {
                 "schema": {
@@ -448,7 +449,7 @@
         "summary": "查询累计结果并刷新下载链接",
         "responses": {
           "200": {
-            "description": "任务快照；建议每 5–10 秒查询",
+            "description": "任务快照；按 poll_after_seconds 或 Retry-After 查询，默认 60 秒并适当错开",
             "content": {
               "application/json": {
                 "schema": {
@@ -508,7 +509,7 @@
             }
           },
           "409": {
-            "description": "ID_CONFLICT: client_task_id 已用于不同的参数或图片；RESULT_NOT_READY: 该视频尚无可下载结果",
+            "description": "ID_CONFLICT: client_task_id 已用于不同的参数或图片；RESULT_NOT_READY: 该视频尚无可下载结果；WATERMARK_FREE_RESULT_REQUIRED: 未获得已验证的无水印原片，暂不提供视频下载；WATERMARK_REPAIR_FAILED: 视频局部修补或完整性校验失败，暂不提供该文件；WATERMARK_REPAIR_UNSUPPORTED_LAYOUT: 平台原片尺寸与已验收的水印修补规则不匹配，需服务方核对",
             "content": {
               "application/json": {
                 "schema": {
@@ -558,7 +559,7 @@
             }
           },
           "422": {
-            "description": "UNSUPPORTED_COMBINATION: 模型、时长、比例或图片数量组合不支持；CALLBACK_NOT_ALLOWED: 回调地址未在服务端登记",
+            "description": "PROMPT_RATIO_CONFLICT: 提示词包含多个不同的视频比例，请只保留一个目标比例；PROMPT_RATIO_UNSUPPORTED: 提示词中的视频比例暂不支持；当前支持 1:1、3:4、4:3、9:16、16:9、21:9；UNSUPPORTED_COMBINATION: 模型、时长、比例或图片数量组合不支持；CALLBACK_NOT_ALLOWED: 回调地址未在服务端登记",
             "content": {
               "application/json": {
                 "schema": {
@@ -696,7 +697,7 @@
             }
           },
           "409": {
-            "description": "ID_CONFLICT: client_task_id 已用于不同的参数或图片；RESULT_NOT_READY: 该视频尚无可下载结果",
+            "description": "ID_CONFLICT: client_task_id 已用于不同的参数或图片；RESULT_NOT_READY: 该视频尚无可下载结果；WATERMARK_FREE_RESULT_REQUIRED: 未获得已验证的无水印原片，暂不提供视频下载；WATERMARK_REPAIR_FAILED: 视频局部修补或完整性校验失败，暂不提供该文件；WATERMARK_REPAIR_UNSUPPORTED_LAYOUT: 平台原片尺寸与已验收的水印修补规则不匹配，需服务方核对",
             "content": {
               "application/json": {
                 "schema": {
@@ -746,7 +747,7 @@
             }
           },
           "422": {
-            "description": "UNSUPPORTED_COMBINATION: 模型、时长、比例或图片数量组合不支持；CALLBACK_NOT_ALLOWED: 回调地址未在服务端登记",
+            "description": "PROMPT_RATIO_CONFLICT: 提示词包含多个不同的视频比例，请只保留一个目标比例；PROMPT_RATIO_UNSUPPORTED: 提示词中的视频比例暂不支持；当前支持 1:1、3:4、4:3、9:16、16:9、21:9；UNSUPPORTED_COMBINATION: 模型、时长、比例或图片数量组合不支持；CALLBACK_NOT_ALLOWED: 回调地址未在服务端登记",
             "content": {
               "application/json": {
                 "schema": {
@@ -985,7 +986,7 @@
             }
           },
           "409": {
-            "description": "ID_CONFLICT: client_task_id 已用于不同的参数或图片；RESULT_NOT_READY: 该视频尚无可下载结果",
+            "description": "ID_CONFLICT: client_task_id 已用于不同的参数或图片；RESULT_NOT_READY: 该视频尚无可下载结果；WATERMARK_FREE_RESULT_REQUIRED: 未获得已验证的无水印原片，暂不提供视频下载；WATERMARK_REPAIR_FAILED: 视频局部修补或完整性校验失败，暂不提供该文件；WATERMARK_REPAIR_UNSUPPORTED_LAYOUT: 平台原片尺寸与已验收的水印修补规则不匹配，需服务方核对",
             "content": {
               "application/json": {
                 "schema": {
@@ -1035,7 +1036,7 @@
             }
           },
           "422": {
-            "description": "UNSUPPORTED_COMBINATION: 模型、时长、比例或图片数量组合不支持；CALLBACK_NOT_ALLOWED: 回调地址未在服务端登记",
+            "description": "PROMPT_RATIO_CONFLICT: 提示词包含多个不同的视频比例，请只保留一个目标比例；PROMPT_RATIO_UNSUPPORTED: 提示词中的视频比例暂不支持；当前支持 1:1、3:4、4:3、9:16、16:9、21:9；UNSUPPORTED_COMBINATION: 模型、时长、比例或图片数量组合不支持；CALLBACK_NOT_ALLOWED: 回调地址未在服务端登记",
             "content": {
               "application/json": {
                 "schema": {
@@ -1210,7 +1211,7 @@
             }
           },
           "409": {
-            "description": "ID_CONFLICT: client_task_id 已用于不同的参数或图片；RESULT_NOT_READY: 该视频尚无可下载结果",
+            "description": "ID_CONFLICT: client_task_id 已用于不同的参数或图片；RESULT_NOT_READY: 该视频尚无可下载结果；WATERMARK_FREE_RESULT_REQUIRED: 未获得已验证的无水印原片，暂不提供视频下载；WATERMARK_REPAIR_FAILED: 视频局部修补或完整性校验失败，暂不提供该文件；WATERMARK_REPAIR_UNSUPPORTED_LAYOUT: 平台原片尺寸与已验收的水印修补规则不匹配，需服务方核对",
             "content": {
               "application/json": {
                 "schema": {
@@ -1260,7 +1261,7 @@
             }
           },
           "422": {
-            "description": "UNSUPPORTED_COMBINATION: 模型、时长、比例或图片数量组合不支持；CALLBACK_NOT_ALLOWED: 回调地址未在服务端登记",
+            "description": "PROMPT_RATIO_CONFLICT: 提示词包含多个不同的视频比例，请只保留一个目标比例；PROMPT_RATIO_UNSUPPORTED: 提示词中的视频比例暂不支持；当前支持 1:1、3:4、4:3、9:16、16:9、21:9；UNSUPPORTED_COMBINATION: 模型、时长、比例或图片数量组合不支持；CALLBACK_NOT_ALLOWED: 回调地址未在服务端登记",
             "content": {
               "application/json": {
                 "schema": {
@@ -1389,6 +1390,102 @@
       }
     },
     "schemas": {
+      "Progress": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "phase",
+          "label",
+          "description",
+          "action",
+          "platform_status",
+          "delivery_status",
+          "updated_at",
+          "last_observed_at"
+        ],
+        "properties": {
+          "phase": {
+            "type": "string",
+            "description": "具体执行阶段；界面展示以此字段和 label 为准",
+            "enum": [
+              "draft",
+              "queued",
+              "starting",
+              "submitting",
+              "awaiting_platform",
+              "generating",
+              "downloading",
+              "processing",
+              "download_blocked",
+              "awaiting_verification",
+              "awaiting_login",
+              "awaiting_confirmation",
+              "submission_unconfirmed",
+              "parameter_mismatch",
+              "reconciling",
+              "needs_review",
+              "completed",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "label": {
+            "type": "string",
+            "description": "阶段中文名称"
+          },
+          "description": {
+            "type": "string",
+            "description": "当前阶段及阻塞原因"
+          },
+          "action": {
+            "type": "string",
+            "description": "服务方处理方式；调用方继续查询原 task_id",
+            "enum": [
+              "none",
+              "verify",
+              "resume",
+              "recollect",
+              "inspect"
+            ]
+          },
+          "platform_status": {
+            "type": "string",
+            "description": "最近确认的平台状态，不代表交付完成",
+            "enum": [
+              "not_submitted",
+              "unknown",
+              "generating",
+              "completed",
+              "failed"
+            ]
+          },
+          "delivery_status": {
+            "type": "string",
+            "description": "文件交付状态",
+            "enum": [
+              "pending",
+              "downloading",
+              "processing",
+              "blocked",
+              "available"
+            ]
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "last_observed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
       "TaskRequest": {
         "type": "object",
         "additionalProperties": false,
@@ -1402,35 +1499,47 @@
         "properties": {
           "client_task_id": {
             "type": "string",
-            "description": "调用方生成的业务任务 ID；同一 Key 下永久防重",
+            "description": "调用方生成的业务任务 ID；本服务内永久防重；轮换 Key 不清空记录",
             "pattern": "^[A-Za-z0-9_-]{1,128}$",
             "example": "order_20260930_0001"
           },
           "model": {
             "type": "string",
-            "description": "固定模型名称，区分大小写；平台提供的版本标签见 /models",
+            "description": "固定模型名称，区分大小写；正反提示词出现 30s、30秒等表达时优先采用 Dreamina Seedance 2.5，响应返回最终模型；版本标签见 /models",
             "enum": [
               "Seedance 2.0 Fast",
               "Seedance 2.0 Mini",
-              "Video 1.5 Pro"
+              "Dreamina Seedance 2.5"
             ]
           },
           "duration": {
             "type": "integer",
-            "description": "秒；Seedance 为 5/10，Video 1.5 Pro 为 5/10/12",
+            "description": "秒；豆包固定 15，Dola 固定 30。正反提示词出现 30 秒表达时覆盖为 30，响应返回最终时长",
             "enum": [
-              5,
-              10,
-              12
+              15,
+              30
             ]
           },
           "ratio": {
             "type": "string",
-            "description": "Seedance 支持 9:16/16:9；Video 1.5 Pro 只支持 9:16",
+            "description": "仅支持六种固定比例：1:1、3:4、4:3、9:16、16:9、21:9；正向 prompt 明确指定的比例优先于本字段，negative_prompt 不参与比例覆盖。响应 ratio 为最终采用的比例；多个冲突比例返回 PROMPT_RATIO_CONFLICT",
             "enum": [
               "9:16",
-              "16:9"
+              "16:9",
+              "1:1",
+              "3:4",
+              "4:3",
+              "21:9"
             ]
+          },
+          "delivery_mode": {
+            "type": "string",
+            "description": "默认 official_original；Dola 使用 watermark_repair（局部修补与重新编码）。命中提示词 30 秒优先规则时自动采用 watermark_repair，其余 Dola 请求须显式选择；响应返回最终交付方式",
+            "enum": [
+              "official_original",
+              "watermark_repair"
+            ],
+            "default": "official_original"
           },
           "count": {
             "type": "integer",
@@ -1441,13 +1550,13 @@
           },
           "prompt": {
             "type": "string",
-            "description": "正向提示词，不能为空白；与反向提示词总 UTF-16 长度不得超过 11968",
+            "description": "正向提示词，不能为空白；与反向提示词总 UTF-16 长度不得超过 11968。原文保留；Dola 30 秒提交时清理 30 秒文字、旧模型名称，合法分镜秒数改为进度比例，实际参数仍为 30 秒",
             "minLength": 1,
             "maxLength": 5000
           },
           "negative_prompt": {
             "type": "string",
-            "description": "反向提示词；独立接收和存储，浏览器执行器将其作为排除要求加入平台提示词",
+            "description": "反向提示词；独立接收和存储，执行时作为排除要求加入平台文本，同样适用 30 秒检测和清理规则",
             "maxLength": 2000,
             "default": ""
           },
@@ -1478,12 +1587,17 @@
                 "description": "机器可读错误码",
                 "enum": [
                   "INVALID_PARAMETER",
+                  "PROMPT_RATIO_CONFLICT",
+                  "PROMPT_RATIO_UNSUPPORTED",
                   "INVALID_API_KEY",
                   "TASK_NOT_FOUND",
                   "NOT_FOUND",
                   "METHOD_NOT_ALLOWED",
                   "ID_CONFLICT",
                   "RESULT_NOT_READY",
+                  "WATERMARK_FREE_RESULT_REQUIRED",
+                  "WATERMARK_REPAIR_FAILED",
+                  "WATERMARK_REPAIR_UNSUPPORTED_LAYOUT",
                   "RESULT_EXPIRED",
                   "RESULT_MISSING",
                   "UPLOAD_TOO_LARGE",
@@ -1540,13 +1654,79 @@
               "cancelled"
             ]
           },
+          "progress": {
+            "$ref": "#/components/schemas/Progress"
+          },
+          "recovery": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "mode",
+              "attempts",
+              "next_check_at",
+              "deadline_at"
+            ],
+            "properties": {
+              "mode": {
+                "type": "string",
+                "description": "核对方式",
+                "enum": [
+                  "automatic",
+                  "manual"
+                ]
+              },
+              "attempts": {
+                "type": "integer",
+                "description": "已执行核对次数"
+              },
+              "next_check_at": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              },
+              "deadline_at": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              }
+            }
+          },
           "video_url": {
             "type": [
               "string",
               "null"
             ],
-            "description": "成功结果的带签名下载 URL；保留期后为 null",
+            "description": "按所选交付模式校验的文件下载 URL；失败或到期后为 null",
             "format": "uri"
+          },
+          "delivery_mode": {
+            "type": "string",
+            "description": "默认 official_original；Dola 使用 watermark_repair（局部修补与重新编码）。命中提示词 30 秒优先规则时自动采用 watermark_repair，其余 Dola 请求须显式选择；响应返回最终交付方式",
+            "enum": [
+              "official_original",
+              "watermark_repair"
+            ],
+            "default": "official_original"
+          },
+          "postprocessed": {
+            "type": "boolean",
+            "description": "true 为局部修补并重新编码的版本"
+          },
+          "processing": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "修补方法、规则版本、矩形区域与画质提示"
+          },
+          "watermark_free": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "官方无水印原片为 true；修补版为 null，不宣称是官方无水印原片或经过逐帧无水印识别"
           },
           "expires_at": {
             "type": [
@@ -1564,12 +1744,12 @@
           },
           "size_bytes": {
             "type": "integer",
-            "description": "原 MP4 字节数",
+            "description": "交付 MP4 字节数",
             "minimum": 1
           },
           "sha256": {
             "type": "string",
-            "description": "原 MP4 SHA-256 十六进制摘要",
+            "description": "交付 MP4 SHA-256 十六进制摘要",
             "pattern": "^[a-f0-9]{64}$"
           },
           "error": {
@@ -1582,11 +1762,15 @@
             "properties": {
               "code": {
                 "type": "string",
-                "description": "结果错误码",
+                "description": "结果错误码；DOLA_HUMAN_VERIFICATION_REQUIRED 为暂停等待服务方操作，非失败终态",
                 "enum": [
                   "GENERATION_FAILED",
                   "RESULT_MISSING",
-                  "RESULT_EXPIRED"
+                  "RESULT_EXPIRED",
+                  "WATERMARK_FREE_RESULT_REQUIRED",
+                  "WATERMARK_REPAIR_FAILED",
+                  "WATERMARK_REPAIR_UNSUPPORTED_LAYOUT",
+                  "DOLA_HUMAN_VERIFICATION_REQUIRED"
                 ]
               },
               "message": {
@@ -1677,13 +1861,13 @@
           },
           "client_task_id": {
             "type": "string",
-            "description": "调用方生成的业务任务 ID；同一 Key 下永久防重",
+            "description": "调用方生成的业务任务 ID；本服务内永久防重；轮换 Key 不清空记录",
             "pattern": "^[A-Za-z0-9_-]{1,128}$",
             "example": "order_20260930_0001"
           },
           "status": {
             "type": "string",
-            "description": "终态：succeeded、partially_succeeded、failed、cancelled；reconciling 需服务方核对，不能重复创建",
+            "description": "终态：succeeded、partially_succeeded、failed、cancelled；reconciling 为核对中，按 recovery 区分自动核对和人工处理，继续查询原任务",
             "enum": [
               "queued",
               "running",
@@ -1695,31 +1879,64 @@
               "cancelled"
             ]
           },
+          "terminal": {
+            "type": "boolean",
+            "description": "只有 true 才是任务终态；HTTP 超时、查询失败和 reconciling 不表示生成失败"
+          },
+          "poll_after_seconds": {
+            "type": "integer",
+            "description": "建议查询间隔秒数，默认 60；终态为 0"
+          },
+          "status_url": {
+            "type": "string",
+            "description": "原任务查询地址",
+            "format": "uri"
+          },
+          "notification_mode": {
+            "type": "string",
+            "description": "未提供对方回调地址时使用查询模式",
+            "enum": [
+              "poll",
+              "webhook_and_poll"
+            ]
+          },
           "model": {
             "type": "string",
-            "description": "固定模型名称，区分大小写；平台提供的版本标签见 /models",
+            "description": "固定模型名称，区分大小写；正反提示词出现 30s、30秒等表达时优先采用 Dreamina Seedance 2.5，响应返回最终模型；版本标签见 /models",
             "enum": [
               "Seedance 2.0 Fast",
               "Seedance 2.0 Mini",
-              "Video 1.5 Pro"
+              "Dreamina Seedance 2.5"
             ]
           },
           "duration": {
             "type": "integer",
-            "description": "秒；Seedance 为 5/10，Video 1.5 Pro 为 5/10/12",
+            "description": "秒；豆包固定 15，Dola 固定 30。正反提示词出现 30 秒表达时覆盖为 30，响应返回最终时长",
             "enum": [
-              5,
-              10,
-              12
+              15,
+              30
             ]
           },
           "ratio": {
             "type": "string",
-            "description": "Seedance 支持 9:16/16:9；Video 1.5 Pro 只支持 9:16",
+            "description": "仅支持六种固定比例：1:1、3:4、4:3、9:16、16:9、21:9；正向 prompt 明确指定的比例优先于本字段，negative_prompt 不参与比例覆盖。响应 ratio 为最终采用的比例；多个冲突比例返回 PROMPT_RATIO_CONFLICT",
             "enum": [
               "9:16",
-              "16:9"
+              "16:9",
+              "1:1",
+              "3:4",
+              "4:3",
+              "21:9"
             ]
+          },
+          "delivery_mode": {
+            "type": "string",
+            "description": "默认 official_original；Dola 使用 watermark_repair（局部修补与重新编码）。命中提示词 30 秒优先规则时自动采用 watermark_repair，其余 Dola 请求须显式选择；响应返回最终交付方式",
+            "enum": [
+              "official_original",
+              "watermark_repair"
+            ],
+            "default": "official_original"
           },
           "count": {
             "type": "integer",
@@ -1818,7 +2035,7 @@
           },
           "client_task_id": {
             "type": "string",
-            "description": "调用方生成的业务任务 ID；同一 Key 下永久防重",
+            "description": "调用方生成的业务任务 ID；本服务内永久防重；轮换 Key 不清空记录",
             "pattern": "^[A-Za-z0-9_-]{1,128}$",
             "example": "order_20260930_0001"
           },
@@ -1834,7 +2051,7 @@
           },
           "status": {
             "type": "string",
-            "description": "终态：succeeded、partially_succeeded、failed、cancelled；reconciling 需服务方核对，不能重复创建",
+            "description": "终态：succeeded、partially_succeeded、failed、cancelled；reconciling 为核对中，按 recovery 区分自动核对和人工处理，继续查询原任务",
             "enum": [
               "queued",
               "running",
@@ -1930,6 +2147,35 @@
                 },
                 "max_images": {
                   "type": "integer"
+                },
+                "daily_credits": {
+                  "type": "integer",
+                  "description": "每账号每日积分",
+                  "const": 10
+                },
+                "credits_per_video": {
+                  "type": "integer",
+                  "description": "每条视频积分消耗",
+                  "enum": [
+                    2,
+                    4
+                  ]
+                },
+                "delivery_modes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "description": "默认 official_original；Dola 使用 watermark_repair（局部修补与重新编码）。命中提示词 30 秒优先规则时自动采用 watermark_repair，其余 Dola 请求须显式选择；响应返回最终交付方式",
+                    "enum": [
+                      "official_original",
+                      "watermark_repair"
+                    ],
+                    "default": "official_original"
+                  }
+                },
+                "note": {
+                  "type": "string",
+                  "description": "模型限制说明"
                 }
               }
             },
@@ -1938,40 +2184,59 @@
                 "model": "Seedance 2.0 Fast",
                 "version": "2.0 Fast",
                 "durations": [
-                  5,
-                  10
+                  15
                 ],
                 "ratios": [
                   "9:16",
-                  "16:9"
+                  "16:9",
+                  "1:1",
+                  "3:4",
+                  "4:3",
+                  "21:9"
                 ],
-                "max_images": 9
+                "max_images": 9,
+                "credits_per_video": 2,
+                "daily_credits": 10
               },
               {
                 "model": "Seedance 2.0 Mini",
                 "version": "2.0 Mini",
                 "durations": [
-                  5,
-                  10
+                  15
                 ],
                 "ratios": [
                   "9:16",
-                  "16:9"
+                  "16:9",
+                  "1:1",
+                  "3:4",
+                  "4:3",
+                  "21:9"
                 ],
-                "max_images": 9
+                "max_images": 9,
+                "credits_per_video": 2,
+                "daily_credits": 10
               },
               {
-                "model": "Video 1.5 Pro",
-                "version": "1.5 Pro",
+                "model": "Dreamina Seedance 2.5",
+                "version": "2.5",
                 "durations": [
-                  5,
-                  10,
-                  12
+                  30
                 ],
                 "ratios": [
-                  "9:16"
+                  "9:16",
+                  "16:9",
+                  "1:1",
+                  "3:4",
+                  "4:3",
+                  "21:9"
                 ],
-                "max_images": 4
+                "max_images": 9,
+                "credits_per_video": 4,
+                "daily_credits": 10,
+                "delivery_modes": [
+                  "watermark_repair"
+                ],
+                "note": "支持文字与参考图片生成；局部修补并重新编码后交付，水印区域可能模糊。"
               }
             ]
           },

@@ -1,3 +1,4 @@
+from browser_runtime import persistent_context
 """Read-only free-video verification for an isolated Doubao browser profile."""
 
 import argparse
@@ -19,8 +20,6 @@ CREATE_URL = "https://www.doubao.com/chat/create-image"
 HISTORY_URL = f"{CREATE_URL}?tab=myCreation"
 DOUBAO_HOSTS = {"doubao.com", "www.doubao.com"}
 VIDEO_MODELS = (
-    "Seedance 2.5",
-    "Seedance 2.0",
     "Seedance 2.0 Fast",
     "Seedance 2.0 Mini",
 )
@@ -199,9 +198,12 @@ def main() -> int:
                 }
                 if channel:
                     options["channel"] = channel
-                context = playwright.chromium.launch_persistent_context(**options)
+                context = persistent_context(playwright, **options)
                 break
             except Exception as error:
+                if str(error) in ("EGRESS_CHECK_FAILED", "EGRESS_IP_MISMATCH"):
+                    summary["error"] = str(error)
+                    break
                 if profile_in_use_error(error, profile_path):
                     summary["error"] = "PROFILE_IN_USE"
                     break
@@ -211,7 +213,8 @@ def main() -> int:
             return 3
 
         try:
-            page = context.pages[0] if context.pages else context.new_page()
+            # A verifier must not navigate the account's existing task or challenge tab.
+            page = context.new_page()
             summary["stage"] = "opening_doubao_page"
             page.goto(DOUBAO_URL, wait_until="domcontentloaded", timeout=60_000)
             summary["stage"] = "checking_login"
@@ -249,30 +252,13 @@ def main() -> int:
                     summary["modelsObserved"] = read_free_models(page)
                     summary["referenceImageLimit"] = read_reference_image_limit(page)
 
-                summary["stage"] = "opening_creation_history"
-                page.goto(HISTORY_URL, wait_until="domcontentloaded", timeout=60_000)
-                page.get_by_text("我的创作", exact=True).first.wait_for(
-                    state="visible", timeout=15_000
-                )
-                page.get_by_text("全部创作", exact=True).first.wait_for(
-                    state="visible", timeout=15_000
-                )
-                summary["creditPageReady"] = "tab=myCreation" in page.url
-                if summary["creditPageReady"]:
-                    page.wait_for_timeout(700)
-                    summary["totalCredits"] = ESTIMATED_DAILY_VIDEO_BUDGET
-                    count, estimated_used = read_today_videos(page, today)
-                    summary["videosCreatedToday"] = count
-                    if estimated_used is not None:
-                        summary["remainingCredits"] = ESTIMATED_DAILY_VIDEO_BUDGET - estimated_used
-                        summary["creditsEstimated"] = True
+                # Daily credits are maintained by the workbench's task ledger.
+                summary["totalCredits"] = 10
 
             summary["ok"] = bool(
                 summary["loggedIn"]
                 and summary["createPageReady"]
-                and summary["creditPageReady"]
                 and summary["modelsObserved"]
-                and summary["videosCreatedToday"] is not None
             )
             summary["stage"] = "completed"
             if summary["loggedIn"] and not summary["ok"]:
@@ -280,10 +266,6 @@ def main() -> int:
                     summary["error"] = "DOUBAO_VIDEO_PAGE_NOT_READY"
                 elif not summary["modelsObserved"]:
                     summary["error"] = "DOUBAO_FREE_MODEL_NOT_FOUND"
-                elif not summary["creditPageReady"]:
-                    summary["error"] = "DOUBAO_HISTORY_PAGE_NOT_READY"
-                else:
-                    summary["error"] = "DOUBAO_HISTORY_INCOMPLETE"
         except PlaywrightTimeoutError:
             summary["error"] = "DOUBAO_PAGE_TIMEOUT"
         except Exception as error:

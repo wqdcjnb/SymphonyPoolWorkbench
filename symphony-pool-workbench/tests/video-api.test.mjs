@@ -29,27 +29,27 @@ async function eventually(check, timeoutMs = 5_000) {
   throw new Error("TEST_TIMED_OUT");
 }
 
-test("a two-video turn waits for both global slots when polling sees staggered completion", () => {
+test("a two-video turn waits for both global slots when polling sees staggered completion", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "video-api-full-turn-"));
-  const store = createVideoApiStore(path.join(root, "test.sqlite"));
+  const store = (await createVideoApiStore(path.join(root, "test.sqlite")));
   const a = apiKeyFingerprint("test-key-turn-a");
   const b = apiKeyFingerprint("test-key-turn-b");
   const payload = { model: "video-production-seedance-20", prompt: "test", negative_prompt: "",
     ratio: "9:16", duration: 5, resolution: "720p", reference_asset_ids: [], count: 2 };
   try {
-    store.enqueue(a, "turn-a-123456", payload);
-    store.enqueue(b, "turn-b-123456", payload);
-    const first = store.reserveNextTurn([a, b], 2);
+    (await store.enqueue(a, "turn-a-123456", payload));
+    (await store.enqueue(b, "turn-b-123456", payload));
+    const first = (await store.reserveNextTurn([a, b], 2));
     const taskIds = [randomUUID(), randomUUID()];
-    store.acceptTurn(first.id, { data: { tasks: taskIds.map(id => ({ id, status: "queued" })) } });
-    store.updateTask(a, taskIds[0], { data: { id: taskIds[0], status: "succeeded" } });
-    assert.equal(store.reserveNextTurn([a, b], 2), null, "one available slot cannot split a two-video turn");
-    store.updateTask(a, taskIds[1], { data: { id: taskIds[1], status: "succeeded" } });
-    const next = store.reserveNextTurn([a, b], 2);
+    (await store.acceptTurn(first.id, { data: { tasks: taskIds.map(id => ({ id, status: "queued" })) } }));
+    (await store.updateTask(a, taskIds[0], { data: { id: taskIds[0], status: "succeeded" } }));
+    assert.equal((await store.reserveNextTurn([a, b], 2)), null, "one available slot cannot split a two-video turn");
+    (await store.updateTask(a, taskIds[1], { data: { id: taskIds[1], status: "succeeded" } }));
+    const next = (await store.reserveNextTurn([a, b], 2));
     assert.equal(next.fingerprint, b);
     assert.equal(next.count, 2);
   } finally {
-    store.close();
+    (await store.close());
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
@@ -124,10 +124,10 @@ test("video API queues two per key, rotates users, and never persists keys", asy
     response.end("{}");
   });
   await new Promise((resolve) => mock.listen(mockPort, "127.0.0.1", resolve));
-  const app = createWorkbenchServer({ port, workspaceRoot: tempRoot, databasePath,
+  const app = (await createWorkbenchServer({ port, workspaceRoot: tempRoot, databasePath,
     generatedRoot: path.join(tempRoot, "generated"),
     videoApiBaseUrl: `http://127.0.0.1:${mockPort}/api/v1`,
-    videoApiSchedulerIntervalMs: 25, videoApiMaxActiveTasks: 2 });
+    videoApiSchedulerIntervalMs: 25, videoApiMaxActiveTasks: 2 }));
   const root = `http://127.0.0.1:${port}`;
   const headers = (key, idempotencyKey) => ({ Authorization: `Bearer ${key}`,
     "Content-Type": "application/json", "Idempotency-Key": idempotencyKey });
@@ -139,9 +139,9 @@ test("video API queues two per key, rotates users, and never persists keys", asy
   });
   try {
     await app.listen();
-    const localDraft = app.store.createDraftJob({ idempotencyKey: "local-draft-unified-list",
+    const localDraft = (await app.store.createDraftJob({ idempotencyKey: "local-draft-unified-list",
       accountId: null, mode: "image_to_video", model: "auto", durationSeconds: 5,
-      prompt: "Local account pool draft", referenceAssets: [], priority: 50 });
+      prompt: "Local account pool draft", referenceAssets: [], priority: 50 }));
     assert.equal((await fetch(`${root}/api/video-provider/models`)).status, 401);
     const models = await fetch(`${root}/api/video-provider/models`, { headers: headers(keyA) });
     assert.equal(models.status, 200);
@@ -167,8 +167,9 @@ test("video API queues two per key, rotates users, and never persists keys", asy
     await eventually(async () => {
       const response = await fetch(`${root}/api/workbench/jobs?status=active`);
       const listing = await response.json();
-      return listing.total === 1 && listing.jobs[0]?.providerBatchId === batchA.id
-        && listing.jobs[0]?.status === "generating";
+      return listing.total === 2
+        && listing.jobs.find((job) => job.providerBatchId === batchA.id)?.status === "generating"
+        && listing.jobs.find((job) => job.providerBatchId === batchB.id)?.status === "queued";
     });
     completeCall(calls[0]);
     await eventually(() => calls.length >= 2);
@@ -258,20 +259,20 @@ test("two slots are shared across a key's batches and queue resumes after key re
   const payload = (count) => ({ model: "video-production-seedance-20", prompt: "test",
     negative_prompt: "", ratio: "9:16", duration: 5, resolution: "720p",
     reference_asset_ids: [], generate_audio: false, count });
-  let store = createVideoApiStore(databasePath);
+  let store = (await createVideoApiStore(databasePath));
   let scheduler = createVideoApiScheduler({ store, client, intervalMs: 25, maxActiveTasks: 4 });
   try {
-    store.enqueue(apiKeyFingerprint(keyA), "resume-A-one", payload(3));
-    store.enqueue(apiKeyFingerprint(keyA), "resume-A-two", payload(2));
-    store.enqueue(apiKeyFingerprint(keyB), "resume-B-one", payload(2));
+    (await store.enqueue(apiKeyFingerprint(keyA), "resume-A-one", payload(3)));
+    (await store.enqueue(apiKeyFingerprint(keyA), "resume-A-two", payload(2)));
+    (await store.enqueue(apiKeyFingerprint(keyB), "resume-B-one", payload(2)));
     scheduler.start();
     scheduler.attach(keyA);
     scheduler.attach(keyB);
     await eventually(() => calls.length === 2);
     assert.deepEqual(calls.map((call) => [call.key, call.count]), [[keyA, 2], [keyB, 2]]);
     await scheduler.stop();
-    store.close();
-    store = createVideoApiStore(databasePath);
+    (await store.close());
+    store = (await createVideoApiStore(databasePath));
     scheduler = createVideoApiScheduler({ store, client, intervalMs: 25, maxActiveTasks: 4 });
     scheduler.start();
     calls[0].taskIds.forEach((id) => taskStatus.set(id, "succeeded"));
@@ -285,7 +286,7 @@ test("two slots are shared across a key's batches and queue resumes after key re
     assert.deepEqual([calls[3].key, calls[3].count], [keyA, 1]);
   } finally {
     await scheduler.stop();
-    store.close();
+    (await store.close());
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
 });

@@ -50,12 +50,17 @@ def valid_session(session, proc_root=Path("/proc")):
         browser = process_args(session["browser"], proc_root)
         xpra = process_args(session["xpra"], proc_root)
         display = process_args(session["xvfb"], proc_root)
+        browser_valid = (("--browser" in browser
+            and has_option(browser, "--profile", session["profile"])
+            and has_option(browser, "--account-id", session["accountId"]))
+            if session.get("browserProvider") == "multilogin" else
+            (Path(browser[0]).name in ("chrome", "chromium")
+            and f"--user-data-dir={session['profile']}" in browser)) if browser else False
         return bool(manager and browser and xpra and display
             and "--serve" in manager
             and has_option(manager, "--profile", session["profile"])
             and has_option(manager, "--account-id", session["accountId"])
-            and Path(browser[0]).name in ("chrome", "chromium")
-            and f"--user-data-dir={session['profile']}" in browser
+            and browser_valid
             and any(Path(arg).name == "xpra" for arg in xpra[:2])
             and session["display"] in xpra
             and f"--bind-ws=127.0.0.1:{session['port']}" in xpra
@@ -98,6 +103,15 @@ class DesktopRoutes:
         if not isinstance(token, str) or not TOKEN.fullmatch(token):
             return None
         session = read_session(self.root / "routes" / f"{token}.json")
+        viewer = session.get("viewerId")
+        if viewer is not None:
+            if not isinstance(viewer, str) or not TOKEN.fullmatch(viewer):
+                return None
+            selected = read_session(self.root / "viewers" / f"{viewer}.json")
+            if selected.get("token") != token or selected.get("accountId") != session.get("accountId"):
+                return None
+        if (self.root / f"{profile_key(session.get('profile', ''))}.automation").exists():
+            return None
         if session.get("token") == token and valid_session(session):
             return ("127.0.0.1", session["port"])
         return None

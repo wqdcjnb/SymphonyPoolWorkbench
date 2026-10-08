@@ -4,13 +4,15 @@
           <form id="jobForm" class="panel form-panel">
             <div class="field-row">
               <label>目标账号<select name="accountId" id="jobAccount" required></select></label>
-              <label>模型<select name="model" id="jobModel" required><option value="Seedance 2.0 Fast">Seedance 2.0 Fast</option><option value="Seedance 2.0 Mini">Seedance 2.0 Mini</option><option value="Video 1.5 Pro">Video 1.5 Pro</option></select></label>
+              <label>模型<select name="model" id="jobModel" required><option value="Seedance 2.0 Fast">豆包 · Seedance 2.0 Fast</option><option value="Seedance 2.0 Mini">豆包 · Seedance 2.0 Mini</option><option value="Dreamina Seedance 2.5">Dola · Seedance 2.5</option></select></label>
             </div>
+            <p class="field-note" id="jobCreditNotice">每个账号每日 10 积分，15 秒视频每条消耗 2 积分。</p>
             <div class="field-row">
-              <label>时长<select name="durationSeconds" id="jobDuration" required><option value="5">5 秒</option><option value="10">10 秒</option><option value="12">12 秒</option></select></label>
-              <label>视频比例<select name="aspectRatio" id="jobAspectRatio" required><option value="9:16">9:16</option><option value="16:9">16:9</option></select></label>
+              <label>时长<select name="durationSeconds" id="jobDuration" required><option value="15">15 秒</option><option value="30">30 秒</option></select></label>
+              <label>视频比例<select name="aspectRatio" id="jobAspectRatio" required><option value="9:16">9:16</option><option value="16:9">16:9</option><option value="1:1">1:1</option><option value="3:4">3:4</option><option value="4:3">4:3</option><option value="21:9">21:9</option></select></label>
             </div>
-            <label>并发数<input name="concurrency" id="jobConcurrency" type="number" min="1" max="8" step="1" value="1" required></label>
+            <p class="field-note">提示词中的比例优先；未指定时使用上方选择。</p>
+            <label>并发数<input name="concurrency" id="jobConcurrency" type="number" min="1" max="100" step="1" value="1" required></label>
             <label>正向提示词<textarea name="positivePrompt" rows="6" maxlength="12000" placeholder="描述想生成的场景、动作和镜头；有参考图片时可说明如何使用图片内容" required></textarea></label>
             <label>负面提示词<textarea name="negativePrompt" rows="3" maxlength="2000" placeholder="描述不希望出现的内容（可选）"></textarea></label>
             <label id="jobReferencePicker" class="reference-picker"><span id="jobImagePickerTitle">参考图片（可选）</span>
@@ -25,7 +27,7 @@
             <div class="panel-heading"><div><span class="kicker">LATEST JOBS</span><h2>任务列表</h2></div></div>
             <div class="job-toolbar">
               <label for="jobStatusFilter">状态筛选
-                <select id="jobStatusFilter"><option value="all">全部任务</option><option value="success">生成成功</option><option value="failed">生成失败</option><option value="active">正在生成</option></select>
+                <select id="jobStatusFilter"><option value="all">全部任务</option><option value="queued">排队中</option><option value="active">未完成任务</option><option value="leased">准备中</option><option value="submitting">提交中</option><option value="submitted">等待平台响应</option><option value="generating">生成中</option><option value="collecting">下载与校验中</option><option value="reconciling">暂停 / 待处理</option><option value="success">已完成</option><option value="failed">失败</option><option value="blocked">需处理</option><option value="cancelled">已取消</option></select>
               </label>
               <span id="jobRange" class="job-range" aria-live="polite"></span>
             </div>

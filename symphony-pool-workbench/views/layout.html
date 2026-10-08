@@ -25,16 +25,16 @@
       </nav>
       <div class="local-card">
         <span class="pulse"></span>
-        <div><strong>仅本机访问</strong><small>127.0.0.1 · SQLite</small></div>
+        <div><strong>账号池服务</strong><small>独立档案 · 任务队列</small></div>
       </div>
     </aside>
 
     <main>
       <header class="topbar">
         <div>
-          <p class="eyebrow">CONTROL PLANE / MVP 01</p>
+          <p class="eyebrow">ACCOUNT POOL / VIDEO WORKBENCH</p>
           <h1>Symphony 号池工作台</h1>
-          <p class="subtitle">Symphony 与豆包账号的本地档案、视频生成任务和状态管理</p>
+          <p class="subtitle">统一管理豆包与 Dola 的账号和视频任务</p>
         </div>
         <div class="top-actions">
           <button class="button ghost" id="refreshButton">刷新数据</button>
@@ -49,11 +49,11 @@
   <dialog id="accountDialog">
     <form id="accountForm" method="dialog">
       <div class="dialog-heading"><div><span class="kicker">NEW PROFILE</span><h2>新增账号档案</h2></div><button class="icon-button" id="closeAccountDialogButton" type="button" aria-label="关闭">×</button></div>
-      <label>账号平台<select id="accountLoginType" name="loginType"><option value="tiktok">TikTok Symphony</option><option value="doubao">豆包网页版</option></select></label>
-      <label>电脑编号<input id="accountWorkerIdInput" name="workerId" value="xzkj-pc-01" required></label>
+      <label>账号平台<select id="accountLoginType" name="loginType"><option value="doubao">豆包</option><option value="dola">Dola</option></select></label>
+      <p class="field-note">系统按在线节点的账号总数自动均衡分配，豆包与 Dola 一起计数。</p>
       <label>账号编号<input id="accountIdInput" name="accountId" required pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,127}"></label>
       <label>显示名称<input id="accountLabelInput" name="label" required maxlength="80"></label>
-      <p class="dialog-note" id="accountDialogNote">创建后打开独立 Symphony 窗口，由你手动登录。关闭窗口后点击只读验收；工作台不接收密码或 Cookie。</p>
+      <p class="dialog-note" id="accountDialogNote">创建后在批量管理页面配置出口组，再打开账号窗口登录并验收。</p>
       <button class="button primary wide" type="submit">建立档案记录</button>
     </form>
   </dialog>

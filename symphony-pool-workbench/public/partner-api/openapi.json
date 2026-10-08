@@ -1,0 +1,2153 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Symphony 号池视频生成 API",
+    "version": "1.5.2",
+    "description": "共享 Bearer Key；异步任务；每批最多 2 条。Dola 须选择 watermark_repair，修补并重新编码后交付；角落可能模糊，不是官方无水印原片。其他模型仍使用原片校验。"
+  },
+  "servers": [
+    {
+      "url": "https://47.84.3.74/v1",
+      "description": "云端 HTTPS 接口；需要专用 Bearer Key"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "paths": {
+    "/models": {
+      "get": {
+        "operationId": "listModels",
+        "summary": "模型名称、版本标签与限制",
+        "responses": {
+          "200": {
+            "description": "当前接口支持的模型",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Models"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "INVALID_PARAMETER: 参数缺失、类型错误或超出范围",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "INVALID_API_KEY: API Key 缺失或无效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "INVALID_DOWNLOAD_SIGNATURE: 下载签名无效；DOWNLOAD_LINK_EXPIRED: 下载链接已过期，请重新查询任务",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "TASK_NOT_FOUND: 任务不存在；NOT_FOUND: 接口不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "METHOD_NOT_ALLOWED: 请求方法不支持",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "ID_CONFLICT: client_task_id 已用于不同的参数或图片；RESULT_NOT_READY: 该视频尚无可下载结果；WATERMARK_FREE_RESULT_REQUIRED: 未获得已验证的无水印原片，暂不提供视频下载；WATERMARK_REPAIR_FAILED: 视频局部修补或完整性校验失败，暂不提供该文件；WATERMARK_REPAIR_UNSUPPORTED_LAYOUT: 平台原片尺寸与已验收的水印修补规则不匹配，需服务方核对",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "RESULT_EXPIRED: 视频文件已超过保留期；RESULT_MISSING: 视频文件已不可用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "UPLOAD_TOO_LARGE: 图片或请求体超过限制",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "UNSUPPORTED_IMAGE_FORMAT: 仅支持 PNG、JPEG、WebP 图片；UNSUPPORTED_MEDIA_TYPE: 请使用 multipart/form-data 或无图片的 application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "416": {
+            "description": "INVALID_RANGE: 不支持该下载范围",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "PROMPT_RATIO_CONFLICT: 提示词包含多个不同的视频比例，请只保留一个目标比例；PROMPT_RATIO_UNSUPPORTED: 提示词中的视频比例暂不支持；当前支持 1:1、3:4、4:3、9:16、16:9、21:9；UNSUPPORTED_COMBINATION: 模型、时长、比例或图片数量组合不支持；CALLBACK_NOT_ALLOWED: 回调地址未在服务端登记",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "RATE_LIMITED: 请求过于频繁，请稍后重试",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "适用时返回建议等待秒数"
+              }
+            }
+          },
+          "500": {
+            "description": "INTERNAL_ERROR: 服务暂时无法处理请求",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "QUEUE_FULL: 待处理任务已达上限，请稍后重试；API_NOT_CONFIGURED: 对外 API 尚未配置；CALLBACK_NOT_CONFIGURED: 回调签名密钥尚未配置",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "适用时返回建议等待秒数"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/videos": {
+      "post": {
+        "operationId": "createVideoTask",
+        "summary": "创建视频任务",
+        "description": "返回受理后结束 HTTP 请求。相同 client_task_id 与规范化参数、图片字节及顺序返回原任务；冲突返回 409。无图片可用 JSON，有图片使用 multipart。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskRequest"
+              },
+              "example": {
+                "client_task_id": "order_20261004_0001",
+                "model": "Dreamina Seedance 2.5",
+                "delivery_mode": "watermark_repair",
+                "duration": 30,
+                "ratio": "9:16",
+                "count": 1,
+                "prompt": "海边日落，镜头缓慢向前推进，保持主体外观一致",
+                "negative_prompt": "不要文字、水印、画面闪烁和肢体变形",
+                "callback_url": ""
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "task"
+                ],
+                "properties": {
+                  "task": {
+                    "type": "string",
+                    "description": "TaskRequest 的 JSON 字符串",
+                    "example": "{\"client_task_id\":\"order_20261004_0001\",\"model\":\"Dreamina Seedance 2.5\",\"delivery_mode\":\"watermark_repair\",\"duration\":30,\"ratio\":\"9:16\",\"count\":1,\"prompt\":\"海边日落，镜头缓慢向前推进，保持主体外观一致\",\"negative_prompt\":\"不要文字、水印、画面闪烁和肢体变形\",\"callback_url\":\"\"}"
+                  },
+                  "images": {
+                    "type": "array",
+                    "maxItems": 9,
+                    "description": "重复 images 字段，原始二进制图片；PNG/JPEG/WebP，每张 20 MiB、合计 100 MiB；顺序保留",
+                    "items": {
+                      "type": "string",
+                      "format": "binary"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "幂等重试，返回原任务",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "已持久化并受理",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string",
+                  "format": "uri"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "INVALID_PARAMETER: 参数缺失、类型错误或超出范围",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "INVALID_API_KEY: API Key 缺失或无效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "INVALID_DOWNLOAD_SIGNATURE: 下载签名无效；DOWNLOAD_LINK_EXPIRED: 下载链接已过期，请重新查询任务",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "TASK_NOT_FOUND: 任务不存在；NOT_FOUND: 接口不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "METHOD_NOT_ALLOWED: 请求方法不支持",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "ID_CONFLICT: client_task_id 已用于不同的参数或图片；RESULT_NOT_READY: 该视频尚无可下载结果；WATERMARK_FREE_RESULT_REQUIRED: 未获得已验证的无水印原片，暂不提供视频下载；WATERMARK_REPAIR_FAILED: 视频局部修补或完整性校验失败，暂不提供该文件；WATERMARK_REPAIR_UNSUPPORTED_LAYOUT: 平台原片尺寸与已验收的水印修补规则不匹配，需服务方核对",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "RESULT_EXPIRED: 视频文件已超过保留期；RESULT_MISSING: 视频文件已不可用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "UPLOAD_TOO_LARGE: 图片或请求体超过限制",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "UNSUPPORTED_IMAGE_FORMAT: 仅支持 PNG、JPEG、WebP 图片；UNSUPPORTED_MEDIA_TYPE: 请使用 multipart/form-data 或无图片的 application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "416": {
+            "description": "INVALID_RANGE: 不支持该下载范围",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "PROMPT_RATIO_CONFLICT: 提示词包含多个不同的视频比例，请只保留一个目标比例；PROMPT_RATIO_UNSUPPORTED: 提示词中的视频比例暂不支持；当前支持 1:1、3:4、4:3、9:16、16:9、21:9；UNSUPPORTED_COMBINATION: 模型、时长、比例或图片数量组合不支持；CALLBACK_NOT_ALLOWED: 回调地址未在服务端登记",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "RATE_LIMITED: 请求过于频繁，请稍后重试",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "适用时返回建议等待秒数"
+              }
+            }
+          },
+          "500": {
+            "description": "INTERNAL_ERROR: 服务暂时无法处理请求",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "QUEUE_FULL: 待处理任务已达上限，请稍后重试；API_NOT_CONFIGURED: 对外 API 尚未配置；CALLBACK_NOT_CONFIGURED: 回调签名密钥尚未配置",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "适用时返回建议等待秒数"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/videos/{task_id}": {
+      "get": {
+        "operationId": "getVideoTask",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "本服务生成的任务 ID",
+              "pattern": "^task-[a-f0-9-]{36}$",
+              "example": "task-550e8400-e29b-41d4-a716-446655440000"
+            }
+          }
+        ],
+        "summary": "查询累计结果并刷新下载链接",
+        "responses": {
+          "200": {
+            "description": "任务快照；按 poll_after_seconds 或 Retry-After 查询，默认 60 秒并适当错开",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "INVALID_PARAMETER: 参数缺失、类型错误或超出范围",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "INVALID_API_KEY: API Key 缺失或无效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "INVALID_DOWNLOAD_SIGNATURE: 下载签名无效；DOWNLOAD_LINK_EXPIRED: 下载链接已过期，请重新查询任务",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "TASK_NOT_FOUND: 任务不存在；NOT_FOUND: 接口不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "METHOD_NOT_ALLOWED: 请求方法不支持",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "ID_CONFLICT: client_task_id 已用于不同的参数或图片；RESULT_NOT_READY: 该视频尚无可下载结果；WATERMARK_FREE_RESULT_REQUIRED: 未获得已验证的无水印原片，暂不提供视频下载；WATERMARK_REPAIR_FAILED: 视频局部修补或完整性校验失败，暂不提供该文件；WATERMARK_REPAIR_UNSUPPORTED_LAYOUT: 平台原片尺寸与已验收的水印修补规则不匹配，需服务方核对",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "RESULT_EXPIRED: 视频文件已超过保留期；RESULT_MISSING: 视频文件已不可用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "UPLOAD_TOO_LARGE: 图片或请求体超过限制",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "UNSUPPORTED_IMAGE_FORMAT: 仅支持 PNG、JPEG、WebP 图片；UNSUPPORTED_MEDIA_TYPE: 请使用 multipart/form-data 或无图片的 application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "416": {
+            "description": "INVALID_RANGE: 不支持该下载范围",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "PROMPT_RATIO_CONFLICT: 提示词包含多个不同的视频比例，请只保留一个目标比例；PROMPT_RATIO_UNSUPPORTED: 提示词中的视频比例暂不支持；当前支持 1:1、3:4、4:3、9:16、16:9、21:9；UNSUPPORTED_COMBINATION: 模型、时长、比例或图片数量组合不支持；CALLBACK_NOT_ALLOWED: 回调地址未在服务端登记",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "RATE_LIMITED: 请求过于频繁，请稍后重试",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "适用时返回建议等待秒数"
+              }
+            }
+          },
+          "500": {
+            "description": "INTERNAL_ERROR: 服务暂时无法处理请求",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "QUEUE_FULL: 待处理任务已达上限，请稍后重试；API_NOT_CONFIGURED: 对外 API 尚未配置；CALLBACK_NOT_CONFIGURED: 回调签名密钥尚未配置",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "适用时返回建议等待秒数"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/videos/{task_id}/cancel": {
+      "post": {
+        "operationId": "cancelVideoTask",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "本服务生成的任务 ID",
+              "pattern": "^task-[a-f0-9-]{36}$",
+              "example": "task-550e8400-e29b-41d4-a716-446655440000"
+            }
+          }
+        ],
+        "summary": "取消尚未提交的生成",
+        "description": "不需要请求体。平台已提交的生成继续收集；返回 cancelling 或最终状态；重复取消不会重复操作。",
+        "responses": {
+          "200": {
+            "description": "取消请求已记录，或已处于终态",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "INVALID_PARAMETER: 参数缺失、类型错误或超出范围",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "INVALID_API_KEY: API Key 缺失或无效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "INVALID_DOWNLOAD_SIGNATURE: 下载签名无效；DOWNLOAD_LINK_EXPIRED: 下载链接已过期，请重新查询任务",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "TASK_NOT_FOUND: 任务不存在；NOT_FOUND: 接口不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "METHOD_NOT_ALLOWED: 请求方法不支持",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "ID_CONFLICT: client_task_id 已用于不同的参数或图片；RESULT_NOT_READY: 该视频尚无可下载结果；WATERMARK_FREE_RESULT_REQUIRED: 未获得已验证的无水印原片，暂不提供视频下载；WATERMARK_REPAIR_FAILED: 视频局部修补或完整性校验失败，暂不提供该文件；WATERMARK_REPAIR_UNSUPPORTED_LAYOUT: 平台原片尺寸与已验收的水印修补规则不匹配，需服务方核对",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "RESULT_EXPIRED: 视频文件已超过保留期；RESULT_MISSING: 视频文件已不可用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "UPLOAD_TOO_LARGE: 图片或请求体超过限制",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "UNSUPPORTED_IMAGE_FORMAT: 仅支持 PNG、JPEG、WebP 图片；UNSUPPORTED_MEDIA_TYPE: 请使用 multipart/form-data 或无图片的 application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "416": {
+            "description": "INVALID_RANGE: 不支持该下载范围",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "PROMPT_RATIO_CONFLICT: 提示词包含多个不同的视频比例，请只保留一个目标比例；PROMPT_RATIO_UNSUPPORTED: 提示词中的视频比例暂不支持；当前支持 1:1、3:4、4:3、9:16、16:9、21:9；UNSUPPORTED_COMBINATION: 模型、时长、比例或图片数量组合不支持；CALLBACK_NOT_ALLOWED: 回调地址未在服务端登记",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "RATE_LIMITED: 请求过于频繁，请稍后重试",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "适用时返回建议等待秒数"
+              }
+            }
+          },
+          "500": {
+            "description": "INTERNAL_ERROR: 服务暂时无法处理请求",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "QUEUE_FULL: 待处理任务已达上限，请稍后重试；API_NOT_CONFIGURED: 对外 API 尚未配置；CALLBACK_NOT_CONFIGURED: 回调签名密钥尚未配置",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "适用时返回建议等待秒数"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/videos/{task_id}/results/{index}": {
+      "get": {
+        "operationId": "downloadVideo",
+        "summary": "原 MP4 下载，支持单段 Range",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "downloadSignature": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "本服务生成的任务 ID",
+              "pattern": "^task-[a-f0-9-]{36}$",
+              "example": "task-550e8400-e29b-41d4-a716-446655440000"
+            }
+          },
+          {
+            "name": "index",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "expires",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "签名链接的到期 Unix 秒；使用 Bearer 时可省略"
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "example": "bytes=0-1023"
+          },
+          {
+            "name": "If-Range",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "description": "ETag 不一致返回完整文件"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "原始视频文件",
+            "headers": {
+              "Content-Length": {
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Accept-Ranges": {
+                "schema": {
+                  "type": "string",
+                  "const": "bytes"
+                }
+              },
+              "Content-Range": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "带双引号的 SHA-256"
+              }
+            },
+            "content": {
+              "video/mp4": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "206": {
+            "description": "单段字节内容",
+            "headers": {
+              "Content-Length": {
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Accept-Ranges": {
+                "schema": {
+                  "type": "string",
+                  "const": "bytes"
+                }
+              },
+              "Content-Range": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "带双引号的 SHA-256"
+              }
+            },
+            "content": {
+              "video/mp4": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "INVALID_PARAMETER: 参数缺失、类型错误或超出范围",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "INVALID_API_KEY: API Key 缺失或无效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "INVALID_DOWNLOAD_SIGNATURE: 下载签名无效；DOWNLOAD_LINK_EXPIRED: 下载链接已过期，请重新查询任务",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "TASK_NOT_FOUND: 任务不存在；NOT_FOUND: 接口不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "METHOD_NOT_ALLOWED: 请求方法不支持",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "ID_CONFLICT: client_task_id 已用于不同的参数或图片；RESULT_NOT_READY: 该视频尚无可下载结果；WATERMARK_FREE_RESULT_REQUIRED: 未获得已验证的无水印原片，暂不提供视频下载；WATERMARK_REPAIR_FAILED: 视频局部修补或完整性校验失败，暂不提供该文件；WATERMARK_REPAIR_UNSUPPORTED_LAYOUT: 平台原片尺寸与已验收的水印修补规则不匹配，需服务方核对",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "RESULT_EXPIRED: 视频文件已超过保留期；RESULT_MISSING: 视频文件已不可用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "UPLOAD_TOO_LARGE: 图片或请求体超过限制",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "UNSUPPORTED_IMAGE_FORMAT: 仅支持 PNG、JPEG、WebP 图片；UNSUPPORTED_MEDIA_TYPE: 请使用 multipart/form-data 或无图片的 application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "416": {
+            "description": "INVALID_RANGE: 不支持该下载范围",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "PROMPT_RATIO_CONFLICT: 提示词包含多个不同的视频比例，请只保留一个目标比例；PROMPT_RATIO_UNSUPPORTED: 提示词中的视频比例暂不支持；当前支持 1:1、3:4、4:3、9:16、16:9、21:9；UNSUPPORTED_COMBINATION: 模型、时长、比例或图片数量组合不支持；CALLBACK_NOT_ALLOWED: 回调地址未在服务端登记",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "RATE_LIMITED: 请求过于频繁，请稍后重试",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "适用时返回建议等待秒数"
+              }
+            }
+          },
+          "500": {
+            "description": "INTERNAL_ERROR: 服务暂时无法处理请求",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "QUEUE_FULL: 待处理任务已达上限，请稍后重试；API_NOT_CONFIGURED: 对外 API 尚未配置；CALLBACK_NOT_CONFIGURED: 回调签名密钥尚未配置",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "适用时返回建议等待秒数"
+              }
+            }
+          }
+        }
+      },
+      "head": {
+        "operationId": "inspectVideo",
+        "summary": "查看原视频大小及校验标识",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "本服务生成的任务 ID",
+              "pattern": "^task-[a-f0-9-]{36}$",
+              "example": "task-550e8400-e29b-41d4-a716-446655440000"
+            }
+          },
+          {
+            "name": "index",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "expires",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "签名链接的到期 Unix 秒；使用 Bearer 时可省略"
+          }
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "downloadSignature": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "返回 Content-Length、Content-Type、ETag、Accept-Ranges，无响应体"
+          },
+          "default": {
+            "description": "与 GET 相同状态码，无响应体"
+          }
+        }
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "operationId": "getOpenApi",
+        "summary": "获取本接口规范",
+        "responses": {
+          "200": {
+            "description": "OpenAPI 3.1 JSON，servers 使用当前配置地址",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "INVALID_PARAMETER: 参数缺失、类型错误或超出范围",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "INVALID_API_KEY: API Key 缺失或无效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "INVALID_DOWNLOAD_SIGNATURE: 下载签名无效；DOWNLOAD_LINK_EXPIRED: 下载链接已过期，请重新查询任务",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "TASK_NOT_FOUND: 任务不存在；NOT_FOUND: 接口不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "METHOD_NOT_ALLOWED: 请求方法不支持",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "ID_CONFLICT: client_task_id 已用于不同的参数或图片；RESULT_NOT_READY: 该视频尚无可下载结果；WATERMARK_FREE_RESULT_REQUIRED: 未获得已验证的无水印原片，暂不提供视频下载；WATERMARK_REPAIR_FAILED: 视频局部修补或完整性校验失败，暂不提供该文件；WATERMARK_REPAIR_UNSUPPORTED_LAYOUT: 平台原片尺寸与已验收的水印修补规则不匹配，需服务方核对",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "RESULT_EXPIRED: 视频文件已超过保留期；RESULT_MISSING: 视频文件已不可用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "UPLOAD_TOO_LARGE: 图片或请求体超过限制",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "UNSUPPORTED_IMAGE_FORMAT: 仅支持 PNG、JPEG、WebP 图片；UNSUPPORTED_MEDIA_TYPE: 请使用 multipart/form-data 或无图片的 application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "416": {
+            "description": "INVALID_RANGE: 不支持该下载范围",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "PROMPT_RATIO_CONFLICT: 提示词包含多个不同的视频比例，请只保留一个目标比例；PROMPT_RATIO_UNSUPPORTED: 提示词中的视频比例暂不支持；当前支持 1:1、3:4、4:3、9:16、16:9、21:9；UNSUPPORTED_COMBINATION: 模型、时长、比例或图片数量组合不支持；CALLBACK_NOT_ALLOWED: 回调地址未在服务端登记",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "RATE_LIMITED: 请求过于频繁，请稍后重试",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "适用时返回建议等待秒数"
+              }
+            }
+          },
+          "500": {
+            "description": "INTERNAL_ERROR: 服务暂时无法处理请求",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "QUEUE_FULL: 待处理任务已达上限，请稍后重试；API_NOT_CONFIGURED: 对外 API 尚未配置；CALLBACK_NOT_CONFIGURED: 回调签名密钥尚未配置",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "适用时返回建议等待秒数"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "webhooks": {
+    "videoResults": {
+      "post": {
+        "summary": "批次结果或取消完成通知",
+        "description": "HTTPS POST 至预登记 callback_url。按 event_id 去重；验签 timestamp + '.' + 原始请求体。签名重试更新、事件 ID 和请求体不变。最长重试 24 小时；不能依赖到达顺序。",
+        "security": [],
+        "parameters": [
+          {
+            "name": "X-Webhook-Id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Webhook-Timestamp",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Unix 秒；建议允许正负 300 秒"
+          },
+          {
+            "name": "X-Webhook-Signature",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "sha256=HMAC-SHA256(webhook_secret, timestamp + '.' + raw_body)"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Webhook"
+              }
+            }
+          }
+        },
+        "responses": {
+          "2XX": {
+            "description": "接收方已可靠保存事件，重复事件也应返回 2xx"
+          },
+          "default": {
+            "description": "发送方稍后重试同一事件"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "服务端本机配置的共享 API Key；不使用 OAuth"
+      },
+      "downloadSignature": {
+        "type": "apiKey",
+        "in": "query",
+        "name": "signature",
+        "description": "使用服务器完整签名下载 URL；必须同时保留 expires 参数"
+      }
+    },
+    "schemas": {
+      "TaskRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "client_task_id",
+          "model",
+          "duration",
+          "ratio",
+          "prompt"
+        ],
+        "properties": {
+          "client_task_id": {
+            "type": "string",
+            "description": "调用方生成的业务任务 ID；本服务内永久防重；轮换 Key 不清空记录",
+            "pattern": "^[A-Za-z0-9_-]{1,128}$",
+            "example": "order_20260930_0001"
+          },
+          "model": {
+            "type": "string",
+            "description": "固定模型名称，区分大小写；正反提示词出现 30s、30秒等表达时优先采用 Dreamina Seedance 2.5，响应返回最终模型；版本标签见 /models",
+            "enum": [
+              "Seedance 2.0 Fast",
+              "Seedance 2.0 Mini",
+              "Dreamina Seedance 2.5"
+            ]
+          },
+          "duration": {
+            "type": "integer",
+            "description": "秒；豆包固定 15，Dola 固定 30。正反提示词出现 30 秒表达时覆盖为 30，响应返回最终时长",
+            "enum": [
+              15,
+              30
+            ]
+          },
+          "ratio": {
+            "type": "string",
+            "description": "仅支持六种固定比例：1:1、3:4、4:3、9:16、16:9、21:9；正向 prompt 明确指定的比例优先于本字段，negative_prompt 不参与比例覆盖。响应 ratio 为最终采用的比例；多个冲突比例返回 PROMPT_RATIO_CONFLICT",
+            "enum": [
+              "9:16",
+              "16:9",
+              "1:1",
+              "3:4",
+              "4:3",
+              "21:9"
+            ]
+          },
+          "delivery_mode": {
+            "type": "string",
+            "description": "默认 official_original；Dola 使用 watermark_repair（局部修补与重新编码）。命中提示词 30 秒优先规则时自动采用 watermark_repair，其余 Dola 请求须显式选择；响应返回最终交付方式",
+            "enum": [
+              "official_original",
+              "watermark_repair"
+            ],
+            "default": "official_original"
+          },
+          "count": {
+            "type": "integer",
+            "description": "请求视频总条数，每轮最多 2 条；不是并发数",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 1
+          },
+          "prompt": {
+            "type": "string",
+            "description": "正向提示词，不能为空白；与反向提示词总 UTF-16 长度不得超过 11968。原文保留；Dola 30 秒提交时清理 30 秒文字、旧模型名称，合法分镜秒数改为进度比例，实际参数仍为 30 秒",
+            "minLength": 1,
+            "maxLength": 5000
+          },
+          "negative_prompt": {
+            "type": "string",
+            "description": "反向提示词；独立接收和存储，执行时作为排除要求加入平台文本，同样适用 30 秒检测和清理规则",
+            "maxLength": 2000,
+            "default": ""
+          },
+          "callback_url": {
+            "type": "string",
+            "description": "预登记的完整 HTTPS 回调地址；省略使用服务端默认值，空字符串关闭该任务回调",
+            "maxLength": 2048
+          }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "code",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "description": "机器可读错误码",
+                "enum": [
+                  "INVALID_PARAMETER",
+                  "PROMPT_RATIO_CONFLICT",
+                  "PROMPT_RATIO_UNSUPPORTED",
+                  "INVALID_API_KEY",
+                  "TASK_NOT_FOUND",
+                  "NOT_FOUND",
+                  "METHOD_NOT_ALLOWED",
+                  "ID_CONFLICT",
+                  "RESULT_NOT_READY",
+                  "WATERMARK_FREE_RESULT_REQUIRED",
+                  "WATERMARK_REPAIR_FAILED",
+                  "WATERMARK_REPAIR_UNSUPPORTED_LAYOUT",
+                  "RESULT_EXPIRED",
+                  "RESULT_MISSING",
+                  "UPLOAD_TOO_LARGE",
+                  "UNSUPPORTED_IMAGE_FORMAT",
+                  "UNSUPPORTED_MEDIA_TYPE",
+                  "INVALID_RANGE",
+                  "UNSUPPORTED_COMBINATION",
+                  "CALLBACK_NOT_ALLOWED",
+                  "INVALID_DOWNLOAD_SIGNATURE",
+                  "DOWNLOAD_LINK_EXPIRED",
+                  "RATE_LIMITED",
+                  "QUEUE_FULL",
+                  "API_NOT_CONFIGURED",
+                  "CALLBACK_NOT_CONFIGURED",
+                  "INTERNAL_ERROR"
+                ]
+              },
+              "message": {
+                "type": "string",
+                "description": "错误说明"
+              }
+            }
+          }
+        }
+      },
+      "Result": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "index",
+          "batch_index",
+          "status"
+        ],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "description": "视频序号，从 1 开始",
+            "minimum": 1
+          },
+          "batch_index": {
+            "type": "integer",
+            "description": "批次，从 1 开始",
+            "minimum": 1
+          },
+          "status": {
+            "type": "string",
+            "description": "该条视频状态",
+            "enum": [
+              "queued",
+              "running",
+              "reconciling",
+              "succeeded",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "recovery": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "mode",
+              "attempts",
+              "next_check_at",
+              "deadline_at"
+            ],
+            "properties": {
+              "mode": {
+                "type": "string",
+                "description": "核对方式",
+                "enum": [
+                  "automatic",
+                  "manual"
+                ]
+              },
+              "attempts": {
+                "type": "integer",
+                "description": "已执行核对次数"
+              },
+              "next_check_at": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              },
+              "deadline_at": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              }
+            }
+          },
+          "video_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "按所选交付模式校验的文件下载 URL；失败或到期后为 null",
+            "format": "uri"
+          },
+          "delivery_mode": {
+            "type": "string",
+            "description": "默认 official_original；Dola 使用 watermark_repair（局部修补与重新编码）。命中提示词 30 秒优先规则时自动采用 watermark_repair，其余 Dola 请求须显式选择；响应返回最终交付方式",
+            "enum": [
+              "official_original",
+              "watermark_repair"
+            ],
+            "default": "official_original"
+          },
+          "postprocessed": {
+            "type": "boolean",
+            "description": "true 为局部修补并重新编码的版本"
+          },
+          "processing": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "修补方法、规则版本、矩形区域与画质提示"
+          },
+          "watermark_free": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "官方无水印原片为 true；修补版为 null，不宣称是官方无水印原片或经过逐帧无水印识别"
+          },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "retained_until": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "description": "交付 MP4 字节数",
+            "minimum": 1
+          },
+          "sha256": {
+            "type": "string",
+            "description": "交付 MP4 SHA-256 十六进制摘要",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "error": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "code",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "description": "结果错误码；DOLA_HUMAN_VERIFICATION_REQUIRED 为暂停等待服务方操作，非失败终态",
+                "enum": [
+                  "GENERATION_FAILED",
+                  "RESULT_MISSING",
+                  "RESULT_EXPIRED",
+                  "WATERMARK_FREE_RESULT_REQUIRED",
+                  "WATERMARK_REPAIR_FAILED",
+                  "WATERMARK_REPAIR_UNSUPPORTED_LAYOUT",
+                  "DOLA_HUMAN_VERIFICATION_REQUIRED"
+                ]
+              },
+              "message": {
+                "type": "string",
+                "description": "错误说明"
+              }
+            }
+          }
+        }
+      },
+      "Delivery": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "event_id",
+          "state",
+          "attempts",
+          "last_http_status",
+          "last_error"
+        ],
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "description": "回调事件 ID；重复投递时不变"
+          },
+          "state": {
+            "type": "string",
+            "description": "通知状态",
+            "enum": [
+              "pending",
+              "sending",
+              "delivered",
+              "failed",
+              "skipped"
+            ]
+          },
+          "attempts": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "last_http_status": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              null,
+              "CALLBACK_HTTP_ERROR",
+              "CALLBACK_UNREACHABLE",
+              "DELIVERY_EXPIRED"
+            ]
+          }
+        }
+      },
+      "Task": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "task_id",
+          "client_task_id",
+          "status",
+          "model",
+          "duration",
+          "ratio",
+          "count",
+          "completed_count",
+          "succeeded_count",
+          "failed_count",
+          "cancelled_count",
+          "created_at",
+          "updated_at",
+          "finished_at",
+          "results",
+          "webhooks"
+        ],
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "description": "本服务生成的任务 ID",
+            "pattern": "^task-[a-f0-9-]{36}$",
+            "example": "task-550e8400-e29b-41d4-a716-446655440000"
+          },
+          "client_task_id": {
+            "type": "string",
+            "description": "调用方生成的业务任务 ID；本服务内永久防重；轮换 Key 不清空记录",
+            "pattern": "^[A-Za-z0-9_-]{1,128}$",
+            "example": "order_20260930_0001"
+          },
+          "status": {
+            "type": "string",
+            "description": "终态：succeeded、partially_succeeded、failed、cancelled；reconciling 为核对中，按 recovery 区分自动核对和人工处理，继续查询原任务",
+            "enum": [
+              "queued",
+              "running",
+              "reconciling",
+              "cancelling",
+              "succeeded",
+              "partially_succeeded",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "terminal": {
+            "type": "boolean",
+            "description": "只有 true 才是任务终态；HTTP 超时、查询失败和 reconciling 不表示生成失败"
+          },
+          "poll_after_seconds": {
+            "type": "integer",
+            "description": "建议查询间隔秒数，默认 60；终态为 0"
+          },
+          "status_url": {
+            "type": "string",
+            "description": "原任务查询地址",
+            "format": "uri"
+          },
+          "notification_mode": {
+            "type": "string",
+            "description": "未提供对方回调地址时使用查询模式",
+            "enum": [
+              "poll",
+              "webhook_and_poll"
+            ]
+          },
+          "model": {
+            "type": "string",
+            "description": "固定模型名称，区分大小写；正反提示词出现 30s、30秒等表达时优先采用 Dreamina Seedance 2.5，响应返回最终模型；版本标签见 /models",
+            "enum": [
+              "Seedance 2.0 Fast",
+              "Seedance 2.0 Mini",
+              "Dreamina Seedance 2.5"
+            ]
+          },
+          "duration": {
+            "type": "integer",
+            "description": "秒；豆包固定 15，Dola 固定 30。正反提示词出现 30 秒表达时覆盖为 30，响应返回最终时长",
+            "enum": [
+              15,
+              30
+            ]
+          },
+          "ratio": {
+            "type": "string",
+            "description": "仅支持六种固定比例：1:1、3:4、4:3、9:16、16:9、21:9；正向 prompt 明确指定的比例优先于本字段，negative_prompt 不参与比例覆盖。响应 ratio 为最终采用的比例；多个冲突比例返回 PROMPT_RATIO_CONFLICT",
+            "enum": [
+              "9:16",
+              "16:9",
+              "1:1",
+              "3:4",
+              "4:3",
+              "21:9"
+            ]
+          },
+          "delivery_mode": {
+            "type": "string",
+            "description": "默认 official_original；Dola 使用 watermark_repair（局部修补与重新编码）。命中提示词 30 秒优先规则时自动采用 watermark_repair，其余 Dola 请求须显式选择；响应返回最终交付方式",
+            "enum": [
+              "official_original",
+              "watermark_repair"
+            ],
+            "default": "official_original"
+          },
+          "count": {
+            "type": "integer",
+            "description": "请求视频总条数，每轮最多 2 条；不是并发数",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 1
+          },
+          "completed_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "succeeded_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "failed_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "cancelled_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Result"
+            },
+            "maxItems": 100
+          },
+          "webhooks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Delivery"
+            }
+          },
+          "idempotent_replay": {
+            "type": "boolean",
+            "description": "仅创建响应包含；true 表示返回已有任务"
+          }
+        }
+      },
+      "Webhook": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "event_id",
+          "event",
+          "task_id",
+          "client_task_id",
+          "batch_index",
+          "is_final",
+          "status",
+          "count",
+          "completed_count",
+          "succeeded_count",
+          "failed_count",
+          "cancelled_count",
+          "occurred_at",
+          "results"
+        ],
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "description": "通知唯一 ID，作为接收方去重键"
+          },
+          "event": {
+            "type": "string",
+            "description": "批次结束，或取消请求最终结束",
+            "enum": [
+              "video.batch.completed",
+              "video.task.finished"
+            ]
+          },
+          "task_id": {
+            "type": "string",
+            "description": "本服务生成的任务 ID",
+            "pattern": "^task-[a-f0-9-]{36}$",
+            "example": "task-550e8400-e29b-41d4-a716-446655440000"
+          },
+          "client_task_id": {
+            "type": "string",
+            "description": "调用方生成的业务任务 ID；本服务内永久防重；轮换 Key 不清空记录",
+            "pattern": "^[A-Za-z0-9_-]{1,128}$",
+            "example": "order_20260930_0001"
+          },
+          "batch_index": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "is_final": {
+            "type": "boolean"
+          },
+          "status": {
+            "type": "string",
+            "description": "终态：succeeded、partially_succeeded、failed、cancelled；reconciling 为核对中，按 recovery 区分自动核对和人工处理，继续查询原任务",
+            "enum": [
+              "queued",
+              "running",
+              "reconciling",
+              "cancelling",
+              "succeeded",
+              "partially_succeeded",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "count": {
+            "type": "integer",
+            "description": "请求视频总条数，每轮最多 2 条；不是并发数",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 1
+          },
+          "completed_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "succeeded_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "failed_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "cancelled_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "results": {
+            "type": "array",
+            "maxItems": 2,
+            "items": {
+              "$ref": "#/components/schemas/Result"
+            }
+          }
+        }
+      },
+      "Models": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "api_version",
+          "models",
+          "limits"
+        ],
+        "properties": {
+          "api_version": {
+            "type": "string",
+            "const": "v1"
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "model",
+                "version",
+                "durations",
+                "ratios",
+                "max_images"
+              ],
+              "properties": {
+                "model": {
+                  "type": "string",
+                  "description": "请求使用的名称"
+                },
+                "version": {
+                  "type": "string",
+                  "description": "平台界面版本标签，不代表内部构建版本"
+                },
+                "durations": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer"
+                  }
+                },
+                "ratios": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "max_images": {
+                  "type": "integer"
+                },
+                "daily_credits": {
+                  "type": "integer",
+                  "description": "每账号每日积分",
+                  "const": 10
+                },
+                "credits_per_video": {
+                  "type": "integer",
+                  "description": "每条视频积分消耗",
+                  "enum": [
+                    2,
+                    4
+                  ]
+                },
+                "delivery_modes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "description": "默认 official_original；Dola 使用 watermark_repair（局部修补与重新编码）。命中提示词 30 秒优先规则时自动采用 watermark_repair，其余 Dola 请求须显式选择；响应返回最终交付方式",
+                    "enum": [
+                      "official_original",
+                      "watermark_repair"
+                    ],
+                    "default": "official_original"
+                  }
+                },
+                "note": {
+                  "type": "string",
+                  "description": "模型限制说明"
+                }
+              }
+            },
+            "example": [
+              {
+                "model": "Seedance 2.0 Fast",
+                "version": "2.0 Fast",
+                "durations": [
+                  15
+                ],
+                "ratios": [
+                  "9:16",
+                  "16:9",
+                  "1:1",
+                  "3:4",
+                  "4:3",
+                  "21:9"
+                ],
+                "max_images": 9,
+                "credits_per_video": 2,
+                "daily_credits": 10
+              },
+              {
+                "model": "Seedance 2.0 Mini",
+                "version": "2.0 Mini",
+                "durations": [
+                  15
+                ],
+                "ratios": [
+                  "9:16",
+                  "16:9",
+                  "1:1",
+                  "3:4",
+                  "4:3",
+                  "21:9"
+                ],
+                "max_images": 9,
+                "credits_per_video": 2,
+                "daily_credits": 10
+              },
+              {
+                "model": "Dreamina Seedance 2.5",
+                "version": "2.5",
+                "durations": [
+                  30
+                ],
+                "ratios": [
+                  "9:16",
+                  "16:9",
+                  "1:1",
+                  "3:4",
+                  "4:3",
+                  "21:9"
+                ],
+                "max_images": 9,
+                "credits_per_video": 4,
+                "daily_credits": 10,
+                "delivery_modes": [
+                  "watermark_repair"
+                ],
+                "note": "支持文字与参考图片生成；局部修补并重新编码后交付，水印区域可能模糊。"
+              }
+            ]
+          },
+          "limits": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "数量、上传大小、提示词、链接和文件保留期限制"
+          }
+        }
+      }
+    }
+  }
+}

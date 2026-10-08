@@ -1,3 +1,4 @@
+from browser_runtime import persistent_context
 import argparse
 import json
 import re
@@ -143,12 +144,15 @@ def main() -> int:
                 }
                 if channel:
                     launch_options["channel"] = channel
-                context = playwright.chromium.launch_persistent_context(**launch_options)
+                context = persistent_context(playwright, **launch_options)
                 summary["browserChannel"] = channel or "chromium"
                 summary["browserMode"] = "headed" if args.headed else "headless"
                 break
             except Exception as error:  # Keep output sanitized; never print profile contents.
                 last_launch_error = type(error).__name__
+                if str(error) in ("EGRESS_CHECK_FAILED", "EGRESS_IP_MISMATCH"):
+                    summary["error"] = str(error)
+                    break
                 if profile_in_use_error(error, profile_path):
                     summary["error"] = "PROFILE_IN_USE"
                     break
@@ -158,7 +162,7 @@ def main() -> int:
             return 3
 
         try:
-            page = context.pages[0] if context.pages else context.new_page()
+            page = context.new_page()
             summary["stage"] = "opening_credit_page"
             page.goto(CREDIT_URL, wait_until="domcontentloaded", timeout=60_000)
             summary["stage"] = "reading_credit_page"

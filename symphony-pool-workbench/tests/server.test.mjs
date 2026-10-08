@@ -50,7 +50,7 @@ function post(port, requestPath, payload) {
 test("malformed URLs and foreign hosts are rejected without stopping the server", async () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "symphony-http-test-"));
   const port = await freePort();
-  const app = createWorkbenchServer({ port, databasePath: path.join(tempRoot, "test.sqlite") });
+  const app = (await createWorkbenchServer({ port, databasePath: path.join(tempRoot, "test.sqlite") }));
   try {
     await app.listen();
     const malformed = await get(port, "/%ZZ");
@@ -70,14 +70,14 @@ test("malformed URLs and foreign hosts are rejected without stopping the server"
   }
 });
 
-test("public listening addresses are rejected", () => {
-  assert.throws(() => createWorkbenchServer({ host: "0.0.0.0" }), /LOCAL_HOST_REQUIRED/);
+test("public listening addresses are rejected", async () => {
+  (await assert.rejects(async () => (await createWorkbenchServer({ host: "0.0.0.0" })), /LOCAL_HOST_REQUIRED/));
 });
 
 test("feature routes render direct links with the matching active page", async () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "symphony-routes-test-"));
   const port = await freePort();
-  const app = createWorkbenchServer({ port, databasePath: path.join(tempRoot, "test.sqlite") });
+  const app = (await createWorkbenchServer({ port, databasePath: path.join(tempRoot, "test.sqlite") }));
   try {
     await app.listen();
     for (const [route, page] of [["/", "jobs"],
@@ -96,7 +96,7 @@ test("feature routes render direct links with the matching active page", async (
       assert.doesNotMatch(html, /id="overview"|href="\/overview"|id="primaryAccount"|id="metricGrid"/);
       if (page === "jobs") {
         assert.match(html, /<h2>工作台<\/h2>/);
-        assert.match(html, /<option value="active">正在生成<\/option>/);
+        assert.match(html, /<option value="active">未完成任务<\/option>/);
         assert.match(html, /aria-current="page" href="\/jobs"[^>]*>.*工作台<\/a>/);
         assert.doesNotMatch(html, /jobTabPool|jobTabApi|id="videoApiForm"/);
         assert.doesNotMatch(html, /href="\/video-api"/);
@@ -126,7 +126,7 @@ test("feature routes render direct links with the matching active page", async (
     assert.equal((await docs.json()).openapi, "3.1.0");
     const example = await fetch(`http://127.0.0.1:${port}/api-docs/task-example.json`);
     assert.equal(example.status, 200);
-    assert.equal((await example.json()).count, 4);
+    assert.equal((await example.json()).count, 1);
   } finally {
     await app.close();
     fs.rmSync(tempRoot, { recursive: true, force: true });
@@ -136,25 +136,25 @@ test("feature routes render direct links with the matching active page", async (
 test("job list paginates completed, failed and active jobs", async () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "symphony-jobs-page-test-"));
   const port = await freePort();
-  const app = createWorkbenchServer({ port, databasePath: path.join(tempRoot, "test.sqlite") });
+  const app = (await createWorkbenchServer({ port, databasePath: path.join(tempRoot, "test.sqlite") }));
   try {
     await app.listen();
     for (let index = 0; index < 15; index += 1) {
-      const job = app.store.createDraftJob({
+      const job = (await app.store.createDraftJob({
         idempotencyKey: `page-test-${index}`, accountId: null, mode: "image_to_video",
-        model: "auto", durationSeconds: 5, prompt: `任务 ${index}`,
+        model: "auto", durationSeconds: 15, prompt: `任务 ${index}`,
         referenceAssets: [], priority: 50,
-      });
-      if (index < 10) app.store.updateJob(job.id, { status: "success" });
-      else if (index < 13) app.store.updateJob(job.id, { status: "failed", errorCode: "TEST_FAILURE" });
+      }));
+      if (index < 10) (await app.store.updateJob(job.id, { status: "success" }));
+      else if (index < 13) (await app.store.updateJob(job.id, { status: "failed", errorCode: "TEST_FAILURE" }));
     }
     const activeStatuses = ["leased", "submitting", "submitted", "generating", "collecting",
-      "leased", "generating"];
-    for (const [index, status] of [...activeStatuses, "queued", "reconciling"].entries()) {
-      const job = app.store.createDraftJob({ idempotencyKey: `active-page-${index}`,
-        accountId: null, mode: "image_to_video", model: "auto", durationSeconds: 5,
-        prompt: `进行中 ${index}`, referenceAssets: [], priority: 50 });
-      app.store.updateJob(job.id, { status });
+      "leased", "generating", "queued", "reconciling"];
+    for (const [index, status] of activeStatuses.entries()) {
+      const job = (await app.store.createDraftJob({ idempotencyKey: `active-page-${index}`,
+        accountId: null, mode: "image_to_video", model: "auto", durationSeconds: 15,
+        prompt: `进行中 ${index}`, referenceAssets: [], priority: 50 }));
+      (await app.store.updateJob(job.id, { status }));
     }
 
     const first = await get(port, "/api/jobs?status=success&page=1&pageSize=6");
@@ -175,16 +175,16 @@ test("job list paginates completed, failed and active jobs", async () => {
     const activeFirst = await get(port, "/api/jobs?status=active&page=1&pageSize=6");
     const activeSecond = await get(port, "/api/jobs?status=active&page=2&pageSize=6");
     assert.equal(activeFirst.status, 200);
-    assert.equal(activeFirst.body.total, 7);
+    assert.equal(activeFirst.body.total, 9);
     assert.equal(activeFirst.body.totalPages, 2);
     assert.equal(activeFirst.body.jobs.length, 6);
-    assert.equal(activeSecond.body.jobs.length, 1);
+    assert.equal(activeSecond.body.jobs.length, 3);
     assert.ok([...activeFirst.body.jobs, ...activeSecond.body.jobs]
       .every((job) => activeStatuses.includes(job.status)));
     assert.equal(new Set([...activeFirst.body.jobs, ...activeSecond.body.jobs]
-      .map((job) => job.id)).size, 7);
+      .map((job) => job.id)).size, 9);
     const unifiedActive = await get(port, "/api/workbench/jobs?status=active&page=1&pageSize=20");
-    assert.equal(unifiedActive.body.total, 7);
+    assert.equal(unifiedActive.body.total, 9);
     assert.ok(unifiedActive.body.jobs.every((job) => activeStatuses.includes(job.status)));
 
     const beyondLast = await get(port, "/api/jobs?status=success&page=999&pageSize=6");
@@ -202,7 +202,7 @@ test("job list paginates completed, failed and active jobs", async () => {
 test("audit events paginate the full history in a stable newest-first order", async () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "symphony-events-page-test-"));
   const port = await freePort();
-  const app = createWorkbenchServer({ port, databasePath: path.join(tempRoot, "test.sqlite") });
+  const app = (await createWorkbenchServer({ port, databasePath: path.join(tempRoot, "test.sqlite") }));
   try {
     await app.listen();
     const initial = await get(port, "/api/events");
@@ -210,11 +210,11 @@ test("audit events paginate the full history in a stable newest-first order", as
     const initialTotal = initial.body.total;
 
     for (let index = 0; index < 25; index += 1) {
-      app.store.createDraftJob({
+      (await app.store.createDraftJob({
         idempotencyKey: `event-page-test-${index}`, accountId: null, mode: "image_to_video",
-        model: "auto", durationSeconds: 5, prompt: `审计测试 ${index}`,
+        model: "auto", durationSeconds: 15, prompt: `审计测试 ${index}`,
         referenceAssets: [], priority: 50,
-      });
+      }));
     }
     const total = initialTotal + 25;
     const totalPages = Math.ceil(total / 10);
@@ -226,7 +226,7 @@ test("audit events paginate the full history in a stable newest-first order", as
       && result.body.total === total && result.body.totalPages === totalPages));
     const pagedIds = pages.flatMap((result) => result.body.events.map((event) => event.id));
     assert.equal(new Set(pagedIds).size, total);
-    assert.deepEqual(pagedIds, app.store.listEvents(total).map((event) => event.id));
+    assert.deepEqual(pagedIds, (await app.store.listEvents(total)).map((event) => event.id));
     assert.deepEqual((await get(port, "/api/overview")).body.events.slice(0, 5).map((event) => event.id),
       pagedIds.slice(0, 5));
 
@@ -254,14 +254,14 @@ test("Doubao accounts use their verifier and reject unsupported task modes", asy
     modelsObserved:["Seedance 2.0 Fast","Seedance 2.0 Mini","Unknown model"], stage:"completed"
   }));`);
   fs.writeFileSync(tikTokVerifierPath, 'throw new Error("wrong verifier");');
-  const app = createWorkbenchServer({
+  const app = (await createWorkbenchServer({
     port,
     workspaceRoot: tempRoot,
     databasePath: path.join(tempRoot, "test.sqlite"),
     pythonExecutable: process.execPath,
     verifierPath: tikTokVerifierPath,
     doubaoVerifierPath: verifierPath,
-  });
+  }));
   try {
     await app.listen();
     const input = { accountId: "test-doubao-01", label: "豆包测试", loginType: "doubao", workerId: "test-pc" };
@@ -270,7 +270,7 @@ test("Doubao accounts use their verifier and reject unsupported task modes", asy
     assert.equal(created.body.account.service, "doubao");
     assert.equal(created.body.account.loginType, "doubao");
     assert.equal(created.body.account.status, "provisioning");
-    assert.equal(app.store.overview().accounts.needsAttention, 2);
+    assert.equal((await app.store.overview()).accounts.needsAttention, 2);
 
     const duplicate = await post(port, "/api/accounts", input);
     assert.equal(duplicate.status, 409);
@@ -280,7 +280,7 @@ test("Doubao accounts use their verifier and reject unsupported task modes", asy
       accountId: input.accountId,
       mode: "text_to_video",
       model: "Dreamina Seedance 2.0",
-      durationSeconds: 5,
+      durationSeconds: 15,
       prompt: "不应提交给豆包",
     });
     assert.equal(draft.status, 400);
@@ -290,23 +290,23 @@ test("Doubao accounts use their verifier and reject unsupported task modes", asy
     const verified = await post(port, `/api/accounts/${input.accountId}/verify`, {});
     assert.equal(verified.status, 200);
     assert.equal(verified.body.account.status, "ready");
-    assert.equal(verified.body.account.creditsRemaining, 7);
+    assert.equal(verified.body.account.creditsRemaining, 10);
     assert.equal(verified.body.account.creditsTotal, 10);
-    assert.equal(verified.body.account.creditsEstimated, true);
+    assert.equal(verified.body.account.creditsEstimated, false);
     assert.equal(verified.body.account.videosCreatedToday, 2);
     assert.equal(verified.body.account.videoCountDate, "2026-09-29");
-    assert.equal(verified.body.account.creditsResetAt, "2026-09-30T00:00:00+08:00");
+    assert.ok(Date.parse(verified.body.account.creditsResetAt) > Date.now());
     assert.equal(verified.body.account.creditPageReady, true);
     assert.equal(verified.body.account.createPageReady, true);
     assert.deepEqual(verified.body.account.models, ["Seedance 2.0 Fast", "Seedance 2.0 Mini"]);
-    assert.equal(app.store.overview().accounts.availableCredits, 0);
-    assert.equal(app.store.overview().accounts.needsAttention, 1);
+    assert.equal((await app.store.overview()).accounts.availableCredits, 10);
+    assert.equal((await app.store.overview()).accounts.needsAttention, 1);
 
     fs.writeFileSync(verifierPath, 'console.log(JSON.stringify({ok:false,loggedIn:false,error:"PROFILE_IN_USE"}));');
     const occupied = await post(port, `/api/accounts/${input.accountId}/verify`, {});
     assert.equal(occupied.status, 409);
     assert.equal(occupied.body.account.status, "busy");
-    assert.equal(occupied.body.account.creditsRemaining, 7);
+    assert.equal(occupied.body.account.creditsRemaining, 10);
     assert.deepEqual(occupied.body.account.models, ["Seedance 2.0 Fast", "Seedance 2.0 Mini"]);
 
     fs.writeFileSync(verifierPath, 'console.log(JSON.stringify({ok:false,loggedIn:false,error:"LOGIN_REQUIRED"}));');
@@ -326,6 +326,28 @@ test("Doubao accounts use their verifier and reject unsupported task modes", asy
   }
 });
 
+test('read-only account verification cannot close a pending video challenge session', async () => {
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'pending-video-verification-'));
+  const port=await freePort();
+  let verified=0;
+  const app=await createWorkbenchServer({port,workspaceRoot:root,databasePath:path.join(root,'db.sqlite'),
+    seedAccount:false,verifyAccount:async()=>{verified++;return {ok:true,loggedIn:true,modelsObserved:['Seedance 2.0 Fast']};}});
+  try {
+    const account={id:'doubao-pending',label:'pending',service:'doubao',loginType:'doubao',workerId:'test',profilePath:path.join(root,'profile')};
+    await app.store.ensureAccount(account);
+    const job=await app.store.createDraftJob({accountId:account.id,idempotencyKey:'pending',mode:'image_to_video',
+      model:'Seedance 2.0 Fast',durationSeconds:15,aspectRatio:'9:16',prompt:'cat',priority:50,referenceAssets:[]});
+    await app.store.updateJob(job.id,{status:'reconciling',errorCode:'DOUBAO_HUMAN_VERIFICATION_REQUIRED'});
+    await app.listen();
+    const result=await post(port,`/api/accounts/${account.id}/verify`,{});
+    assert.equal(result.status,409);assert.equal(result.body.error,'PENDING_TASK_RECOVERY_REQUIRED');
+    assert.equal(result.body.loginUrl,`/accounts/${account.id}/login`);
+    assert.equal(result.body.jobs[0].id,job.id);assert.equal(verified,0);
+    assert.equal((await app.store.getJob(job.id)).errorCode,'DOUBAO_HUMAN_VERIFICATION_REQUIRED');
+    assert.equal((await app.store.getAccount(account.id)).status,'auth_required');
+  } finally {await app.close();fs.rmSync(root,{recursive:true,force:true});}
+});
+
 test("image-to-video draft starts through its account and serves the completed MP4", async () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "symphony-video-test-"));
   const port = await freePort();
@@ -342,9 +364,10 @@ console.log(JSON.stringify({stage:"submitted",remoteUrl:"https://www.doubao.com/
 fs.mkdirSync(path.dirname(job.outputPath),{recursive:true});
 fs.writeFileSync(job.outputPath,Buffer.from("fake-mp4"));
 console.log(JSON.stringify({stage:"success",resultPath:job.outputPath}));`, "utf8");
-  const app = createWorkbenchServer({ port, workspaceRoot: tempRoot,
+  const app = (await createWorkbenchServer({ port, workspaceRoot: tempRoot,
     databasePath: path.join(tempRoot, "test.sqlite"), pythonExecutable: process.execPath,
-    workerPath, generatedRoot, uploadRoot });
+    verifyAccount: async a=>({ok:true,loggedIn:true,modelsObserved:a.models,remainingCredits:a.creditsRemaining}), schedulerIntervalMs:25,
+    workerPath, generatedRoot, uploadRoot }));
   try {
     await app.listen();
     const uploadResponse = await fetch(`http://127.0.0.1:${port}/api/assets`, {
@@ -360,12 +383,12 @@ console.log(JSON.stringify({stage:"success",resultPath:job.outputPath}));`, "utf
     assert.equal(invalidUpload.status, 400);
     assert.equal((await invalidUpload.json()).error, "REFERENCE_IMAGE_INVALID_FORMAT");
     const account = (await post(port, "/api/accounts", { accountId: "doubao-test-01", label: "豆包测试", loginType: "doubao", workerId: "pc" })).body.account;
-    app.store.saveVerification(account.id, { ok: true, loggedIn: true, modelsObserved: ["Seedance 2.0 Mini"],
+    (await app.store.saveVerification(account.id, { ok: true, loggedIn: true, modelsObserved: ["Seedance 2.0 Mini"],
       remainingCredits: 9, totalCredits: 10, creditsEstimated: true, nextRefresh: null,
       videosCreatedToday: 1, videoCountDate: "2026-09-29", referenceImageLimit: null,
-      creditPageReady: true, createPageReady: true });
+      creditPageReady: true, createPageReady: true }));
     const input = { accountId: account.id, mode: "image_to_video", model: "Seedance 2.0 Mini",
-      durationSeconds: 5, prompt: "纸飞机向前飞", referenceAssets: [uploaded.path] };
+      durationSeconds: 15, prompt: "纸飞机向前飞", referenceAssets: [uploaded.path] };
     const created = await post(port, "/api/jobs", input);
     assert.equal(created.status, 201);
     assert.equal(created.body.job.status, "draft");
@@ -381,16 +404,18 @@ console.log(JSON.stringify({stage:"success",resultPath:job.outputPath}));`, "utf
     assert.deepEqual(edited.referenceAssetNames, ["纸飞机.png"]);
     const started = await post(port, `/api/jobs/${created.body.job.id}/start`, {});
     assert.equal(started.status, 202);
+    await app.queueScheduler.wake();
+    if (started.body.job) started.body.job = await app.store.getJob(started.body.job.id);
     assert.equal(started.body.job.aspectRatio, "9:16");
     const tooLate = await fetch(`http://127.0.0.1:${port}/api/jobs/${created.body.job.id}`, {
       method: "PATCH", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(input),
     });
     assert.equal(tooLate.status, 409);
-    for (let i = 0; i < 50 && app.store.getJob(created.body.job.id).status !== "success"; i++) {
+    for (let i = 0; i < 50 && (await app.store.getJob(created.body.job.id)).status !== "success"; i++) {
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
-    const job = app.store.getJob(created.body.job.id);
+    const job = (await app.store.getJob(created.body.job.id));
     assert.equal(job.status, "success");
     assert.equal(job.remoteUrl, "https://www.doubao.com/chat/123456");
     const repeat = await post(port, `/api/jobs/${job.id}/start`, {});
@@ -420,9 +445,10 @@ console.log(JSON.stringify({stage:"submitted",remoteUrl:"https://www.doubao.com/
 fs.mkdirSync(path.dirname(job.outputPath),{recursive:true});
 fs.writeFileSync(job.outputPath,Buffer.from("fake-mp4"));
 console.log(JSON.stringify({stage:"success",resultPath:job.outputPath}));`, "utf8");
-  const app = createWorkbenchServer({ port, workspaceRoot: tempRoot,
+  const app = (await createWorkbenchServer({ port, workspaceRoot: tempRoot,
     databasePath: path.join(tempRoot, "test.sqlite"), pythonExecutable: process.execPath,
-    workerPath, generatedRoot: path.join(tempRoot, "generated"), uploadRoot: path.join(tempRoot, "uploads") });
+    verifyAccount: async a=>({ok:true,loggedIn:true,modelsObserved:a.models,remainingCredits:a.creditsRemaining}), schedulerIntervalMs:25,
+    workerPath, generatedRoot: path.join(tempRoot, "generated"), uploadRoot: path.join(tempRoot, "uploads") }));
   try {
     await app.listen();
     const base = `http://127.0.0.1:${port}`;
@@ -450,17 +476,17 @@ console.log(JSON.stringify({stage:"success",resultPath:job.outputPath}));`, "utf
     const addAccount = async (id, loginType, models) => {
       const account = (await post(port, "/api/accounts", { accountId: id, label: id,
         loginType, workerId: id })).body.account;
-      app.store.saveVerification(id, { ok: true, loggedIn: true, modelsObserved: models,
+      (await app.store.saveVerification(id, { ok: true, loggedIn: true, modelsObserved: models,
         remainingCredits: 10, totalCredits: 10, creditsEstimated: false, nextRefresh: null,
         videosCreatedToday: 0, videoCountDate: todayBeijing, referenceImageLimit: null,
-        creditPageReady: true, createPageReady: true });
+        creditPageReady: true, createPageReady: true }));
       return account;
     };
     const fast = await addAccount("doubao-fast", "doubao", ["Seedance 2.0 Fast"]);
     const mini = await addAccount("doubao-mini", "doubao", ["Seedance 2.0 Mini"]);
-    const tiktok = await addAccount("tiktok-pro", "tiktok", ["Video 1.5 Pro"]);
+    const tiktok = await addAccount("dola-long", "dola", ["Dreamina Seedance 2.5"]);
     const input = { accountId: "auto", mode: "reference_to_video", model: "auto",
-      durationSeconds: 5, aspectRatio: "9:16", prompt: "让参考素材中的场景轻微运动",
+      durationSeconds: 15, aspectRatio: "9:16", prompt: "让参考素材中的场景轻微运动",
       referenceAssets: [], referenceVideo: firstVideo.body.path, referenceVideoName: "clip.mp4" };
     const missing = await post(port, "/api/jobs", { ...input, referenceVideo: null });
     assert.equal(missing.body.error, "REFERENCE_VIDEO_REQUIRED");
@@ -489,12 +515,14 @@ console.log(JSON.stringify({stage:"success",resultPath:job.outputPath}));`, "utf
     assert.deepEqual(updated.referenceAssetNames, ["frame.png"]);
     const started = await post(port, `/api/jobs/${created.body.job.id}/start`, {});
     assert.equal(started.status, 202);
+    await app.queueScheduler.wake();
+    if (started.body.job) started.body.job = await app.store.getJob(started.body.job.id);
     assert.equal(started.body.job.accountId, fast.id);
     assert.equal(started.body.job.model, "Seedance 2.0 Fast");
-    for (let i = 0; i < 50 && app.store.getJob(created.body.job.id).status !== "success"; i++) {
+    for (let i = 0; i < 50 && (await app.store.getJob(created.body.job.id)).status !== "success"; i++) {
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
-    assert.equal(app.store.getJob(created.body.job.id).status, "success");
+    assert.equal((await app.store.getJob(created.body.job.id)).status, "success");
     assert.notEqual(started.body.job.accountId, mini.id);
 
     fs.writeFileSync(workerPath, `console.log(JSON.stringify({stage:"submitted",remoteUrl:"https://www.doubao.com/chat/765432"}));
@@ -504,119 +532,60 @@ process.exit(1);`, "utf8");
     assert.equal(quotaDraft.status, 201);
     const quotaStart = await post(port, `/api/jobs/${quotaDraft.body.job.id}/start`, {});
     assert.equal(quotaStart.status, 202);
-    for (let i = 0; i < 50 && app.store.getJob(quotaDraft.body.job.id).status !== "failed"; i++) {
+    for (let i = 0; i < 50 && (await app.store.getJob(quotaDraft.body.job.id)).status !== "failed"; i++) {
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
-    assert.equal(app.store.getJob(quotaDraft.body.job.id).errorCode, "DOUBAO_FREE_QUOTA_EXHAUSTED");
-    assert.equal(app.store.getJob(quotaDraft.body.job.id).status, "failed");
-    assert.equal(app.store.getAccount(fast.id).status, "cooling");
-    assert.equal(app.store.getAccount(fast.id).creditsRemaining, 0);
-    app.store.saveVerification(fast.id, { ok: true, loggedIn: true,
+    assert.equal((await app.store.getJob(quotaDraft.body.job.id)).errorCode, "DOUBAO_FREE_QUOTA_EXHAUSTED");
+    assert.equal((await app.store.getJob(quotaDraft.body.job.id)).status, "failed");
+    assert.equal((await app.store.getAccount(fast.id)).status, "cooling");
+    assert.equal((await app.store.getAccount(fast.id)).creditsRemaining, 0);
+    (await app.store.saveVerification(fast.id, { ok: true, loggedIn: true,
       modelsObserved: ["Seedance 2.0 Fast"], remainingCredits: 3, totalCredits: 10,
       creditsEstimated: true, nextRefresh: null, videosCreatedToday: 7,
       videoCountDate: todayBeijing, referenceImageLimit: null,
-      creditPageReady: true, createPageReady: true });
-    assert.equal(app.store.getAccount(fast.id).status, "cooling");
-    assert.equal(app.store.getAccount(fast.id).creditsRemaining, 0);
+      creditPageReady: true, createPageReady: true }));
+    assert.equal((await app.store.getAccount(fast.id)).status, "cooling");
+    assert.equal((await app.store.getAccount(fast.id)).creditsRemaining, 0);
   } finally {
     await app.close();
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
 });
 
-test("automatic selections resolve to TikTok at 12 seconds and Doubao at 5 seconds", async () => {
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "symphony-routing-test-"));
+test("automatic dispatch follows the fixed Doubao and Dola catalog", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "new-video-routing-"));
   const port = await freePort();
-  const imagePath = path.join(tempRoot, "首帧.png");
-  const secondImagePath = path.join(tempRoot, "参考图.png");
-  const workerPath = path.join(tempRoot, "fake-worker.mjs");
-  fs.writeFileSync(imagePath, Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9eUIO1oAAAAASUVORK5CYII=", "base64"));
-  fs.copyFileSync(imagePath, secondImagePath);
-  fs.writeFileSync(workerPath, `import fs from "node:fs";
-import path from "node:path";
-let input=""; for await (const chunk of process.stdin) input+=chunk;
-const job=JSON.parse(input);
-const remoteUrl=job.service==="symphony"
-  ? "https://ads.tiktok.com/creative/creativestudio/image-to-video?activeId=123456"
-  : "https://www.doubao.com/chat/123456";
-console.log(JSON.stringify({stage:"submitting"}));
-console.log(JSON.stringify({stage:"submitted",remoteUrl}));
-fs.mkdirSync(path.dirname(job.outputPath),{recursive:true});
-fs.writeFileSync(job.outputPath,Buffer.from("fake-mp4"));
-console.log(JSON.stringify({stage:"success",resultPath:job.outputPath}));`, "utf8");
-  const app = createWorkbenchServer({ port, workspaceRoot: tempRoot,
-    databasePath: path.join(tempRoot, "test.sqlite"), pythonExecutable: process.execPath,
-    workerPath, generatedRoot: path.join(tempRoot, "generated") });
+  const workerPath = path.join(root, "worker.mjs");
+  fs.writeFileSync(workerPath, `import fs from 'node:fs';import path from 'node:path';
+    let input='';for await(const chunk of process.stdin)input+=chunk;const job=JSON.parse(input);
+    console.log(JSON.stringify({stage:'submitting'}));
+    console.log(JSON.stringify({stage:'submitted',remoteUrl:'https://www.'+job.service+'.com/chat/123456'}));
+    fs.mkdirSync(path.dirname(job.outputPath),{recursive:true});fs.writeFileSync(job.outputPath,'fake-mp4');
+    console.log(JSON.stringify({stage:'success',resultPath:job.outputPath}));`);
+  const app = await createWorkbenchServer({ port, workspaceRoot: root, databasePath: path.join(root, 'db.sqlite'),
+    workerPath, pythonExecutable: process.execPath, generatedRoot: path.join(root, 'generated'),
+    verifyAccount: async a=>({ok:true,loggedIn:true,modelsObserved:a.models}), schedulerIntervalMs:25 });
   try {
     await app.listen();
-    const createAccount = async (id, loginType, model) => {
-      const account = (await post(port, "/api/accounts", { accountId: id, label: id, loginType, workerId: "pc" })).body.account;
-      app.store.saveVerification(id, { ok: true, loggedIn: true, modelsObserved: [model],
-        remainingCredits: 100, totalCredits: 100, creditsEstimated: false, nextRefresh: null,
-        videosCreatedToday: 0, videoCountDate: null, referenceImageLimit: null,
-        creditPageReady: true, createPageReady: true });
-      return account;
-    };
-    const doubao = await createAccount("doubao-auto", "doubao", "Seedance 2.0 Mini");
-    const tiktok = await createAccount("tiktok-auto", "tiktok", "Video 1.5 Pro");
-    const input = { accountId: "auto", mode: "image_to_video", model: "auto",
-      durationSeconds: 12, aspectRatio: "9:16", prompt: "自动派号", referenceAssets: [imagePath] };
-    const invalid = await post(port, "/api/jobs", { ...input, model: "Seedance 2.0 Mini" });
-    assert.equal(invalid.status, 400);
-    assert.equal(invalid.body.error, "JOB_PARAMETERS_INVALID");
-    const fifteen = await post(port, "/api/jobs", { ...input, durationSeconds: 15 });
-    assert.equal(fifteen.status, 400);
-    assert.equal(fifteen.body.error, "INVALID_DURATION");
-    const proOnDoubao = await post(port, "/api/jobs", { ...input, accountId: doubao.id, model: "Video 1.5 Pro", durationSeconds: 5 });
-    assert.equal(proOnDoubao.body.error, "JOB_PARAMETERS_INVALID");
-    const multiOnTiktok = await post(port, "/api/jobs", { ...input, model: "Video 1.5 Pro", durationSeconds: 5,
-      referenceAssets: [imagePath, secondImagePath] });
-    assert.equal(multiOnTiktok.status, 201);
-    const multiTwelve = await post(port, "/api/jobs", { ...input,
-      referenceAssets: [imagePath, secondImagePath] });
-    assert.equal(multiTwelve.status, 201);
-    const fiveAssets = [imagePath, secondImagePath, imagePath, secondImagePath, imagePath];
-    const fiveOnTiktok = await post(port, "/api/jobs", { ...input, accountId: tiktok.id, durationSeconds: 5,
-      referenceAssets: fiveAssets });
-    assert.equal(fiveOnTiktok.body.error, "JOB_PARAMETERS_INVALID");
-    const fiveOnDoubao = await post(port, "/api/jobs", { ...input, durationSeconds: 5,
-      referenceAssets: fiveAssets });
-    assert.equal(fiveOnDoubao.status, 201);
-    const tenImages = await post(port, "/api/jobs", { ...input, durationSeconds: 5,
-      referenceAssets: [...fiveAssets, ...fiveAssets] });
-    assert.equal(tenImages.body.error, "REFERENCE_IMAGE_COUNT_INVALID");
-    const tiktokRatio = await post(port, "/api/jobs", { ...input, accountId: tiktok.id, durationSeconds: 5,
-      aspectRatio: "9:16" });
-    assert.equal(tiktokRatio.status, 201);
-    const tiktokOtherRatio = await post(port, "/api/jobs", { ...input, accountId: tiktok.id, durationSeconds: 5,
-      aspectRatio: "16:9" });
-    assert.equal(tiktokOtherRatio.body.error, "JOB_PARAMETERS_INVALID");
-
-    const twelve = await post(port, "/api/jobs", input);
-    assert.equal(twelve.body.job.accountId, null);
-    assert.equal(twelve.body.job.model, "auto");
-    const startedTwelve = await post(port, `/api/jobs/${twelve.body.job.id}/start`, {});
-    assert.equal(startedTwelve.status, 202);
-    assert.equal(startedTwelve.body.job.accountId, tiktok.id);
-    assert.equal(startedTwelve.body.job.model, "Video 1.5 Pro");
-    assert.equal(startedTwelve.body.job.aspectRatio, "9:16");
-    for (let i = 0; i < 50 && app.store.getJob(twelve.body.job.id).status !== "success"; i++) {
-      await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal((await post(port,'/api/accounts',{accountId:'removed',label:'Removed',loginType:'tiktok',workerId:'test'})).status,400);
+    for(const [service,model,duration,cost] of [['doubao','Seedance 2.0 Mini',15,2],['dola','Dreamina Seedance 2.5',30,4]]) {
+      const id=service+'-fixed';
+      assert.equal((await post(port,'/api/accounts',{accountId:id,label:id,loginType:service,workerId:'test'})).status,201);
+      await app.store.saveVerification(id,{ok:true,loggedIn:true,modelsObserved:[model]});
+      for(const ratio of ['9:16','16:9']) {
+        const body={accountId:'auto',mode:'image_to_video',model:'auto',durationSeconds:duration,aspectRatio:ratio,prompt:'fixed catalog',referenceAssets:[]};
+        const created=await post(port,'/api/jobs',body);
+        assert.equal(created.status,201);
+        assert.equal((await post(port,`/api/jobs/${created.body.job.id}/start`,{})).status,202);
+        for(let i=0;i<100;i++){if((await app.store.getJob(created.body.job.id)).status==='success')break;await new Promise(r=>setTimeout(r,30));}
+        const saved=await app.store.getJob(created.body.job.id);
+        assert.equal(saved.status,'success');assert.equal(saved.accountId,id);assert.equal(saved.model,model);assert.equal(saved.creditCost,cost);
+      }
+      assert.equal((await app.store.getAccount(id)).creditsRemaining,10-2*cost);
+      for(const durationSeconds of [5,10,12]) assert.equal((await post(port,'/api/jobs',{accountId:id,mode:'image_to_video',model,durationSeconds,prompt:'invalid',referenceAssets:[]})).status,400);
+      assert.equal((await post(port,'/api/jobs',{accountId:id,mode:'image_to_video',model,durationSeconds:duration===15?30:15,prompt:'invalid',referenceAssets:[]})).status,400);
     }
-    assert.equal(app.store.getJob(twelve.body.job.id).remoteUrl,
-      "https://ads.tiktok.com/creative/creativestudio/image-to-video?activeId=123456");
-
-    const five = await post(port, "/api/jobs", { ...input, durationSeconds: 5,
-      referenceAssets: [imagePath, secondImagePath] });
-    const startedFive = await post(port, `/api/jobs/${five.body.job.id}/start`, {});
-    assert.equal(startedFive.status, 202);
-    assert.equal(startedFive.body.job.accountId, doubao.id);
-    assert.equal(startedFive.body.job.model, "Seedance 2.0 Mini");
-    assert.equal(startedFive.body.job.referenceAssets.length, 2);
-  } finally {
-    await app.close();
-    fs.rmSync(tempRoot, { recursive: true, force: true });
-  }
+  } finally { await app.close(); fs.rmSync(root,{recursive:true,force:true}); }
 });
 
 test("unified image generation reserves distinct accounts for the whole batch", async () => {
@@ -636,28 +605,31 @@ console.log(JSON.stringify({ stage: "submitting" }));
 console.log(JSON.stringify({ stage: "submitted", remoteUrl: "https://www.doubao.com/chat/123456" }));
 fs.writeFileSync(job.outputPath, Buffer.from("fake-mp4"));
 console.log(JSON.stringify({ stage: "success", resultPath: job.outputPath }));`, "utf8");
-  const app = createWorkbenchServer({ port, workspaceRoot: tempRoot,
+  const app = (await createWorkbenchServer({ port, workspaceRoot: tempRoot,
     databasePath: path.join(tempRoot, "test.sqlite"), pythonExecutable: process.execPath,
-    workerPath, generatedRoot });
+    verifyAccount: async a=>({ok:true,loggedIn:true,modelsObserved:a.models,remainingCredits:a.creditsRemaining}), schedulerIntervalMs:25,
+    workerPath, generatedRoot }));
   try {
     await app.listen();
     const addReadyAccount = async (id) => {
       const added = await post(port, "/api/accounts", { accountId: id, label: id,
         loginType: "doubao", workerId: "pc" });
       assert.equal(added.status, 201);
-      app.store.saveVerification(id, { ok: true, loggedIn: true,
+      (await app.store.saveVerification(id, { ok: true, loggedIn: true,
         modelsObserved: ["Seedance 2.0 Fast"], remainingCredits: 10, totalCredits: 10,
         creditsEstimated: true, nextRefresh: null, videosCreatedToday: 0,
         videoCountDate: null, referenceImageLimit: null,
-        creditPageReady: true, createPageReady: true });
+        creditPageReady: true, createPageReady: true }));
     };
     await addReadyAccount("batch-doubao-1");
     const input = { accountId: "auto", model: "Seedance 2.0 Fast",
-      durationSeconds: 5, aspectRatio: "16:9", positivePrompt: "镜头缓慢移动",
+      durationSeconds: 15, aspectRatio: "16:9", positivePrompt: "镜头缓慢移动",
       negativePrompt: "不要文字和水印", concurrency: 2,
       referenceAssets: [imagePath], referenceAssetNames: ["reference.png"] };
     for (const invalid of [{ ...input, model: "auto" },
-      { ...input, aspectRatio: "auto" }, { ...input, concurrency: 9 }]) {
+      { ...input, aspectRatio: "unsupported" }, { ...input, aspectRatio: "2:1" }, { ...input, aspectRatio: "auto" },
+      { mode: "image_to_video", model: input.model, durationSeconds: 15, prompt: input.positivePrompt, aspectRatio: "2:1" },
+      { ...input, concurrency: 101 }]) {
       const rejected = await post(port, "/api/jobs", invalid);
       assert.equal(rejected.status, 400);
     }
@@ -667,31 +639,23 @@ console.log(JSON.stringify({ stage: "success", resultPath: job.outputPath }));`,
     assert.equal(created.body.job.negativePrompt, input.negativePrompt);
     assert.equal(created.body.job.concurrency, 2);
     const batchId = created.body.job.id;
-    const shortage = await post(port, `/api/jobs/${batchId}/start`, {});
-    assert.equal(shortage.status, 400);
-    assert.equal(shortage.body.error, "INSUFFICIENT_ELIGIBLE_ACCOUNTS");
-    assert.equal(app.store.getJob(batchId).status, "draft");
-    assert.equal(app.store.listJobs().length, 1);
     const oneStepInput = { ...input, idempotencyKey: "external-batch-test" };
-    const oneStepShortage = await post(port, "/api/video-generations", oneStepInput);
-    assert.equal(oneStepShortage.status, 400);
-    assert.equal(oneStepShortage.body.error, "INSUFFICIENT_ELIGIBLE_ACCOUNTS");
-    assert.equal(app.store.getJobByIdempotencyKey(oneStepInput.idempotencyKey).status, "draft");
-
     await addReadyAccount("batch-doubao-2");
     const started = await post(port, `/api/jobs/${batchId}/start`, {});
     assert.equal(started.status, 202);
+    await app.queueScheduler.wake();
+    if (started.body.job) started.body.job = await app.store.getJob(started.body.job.id);
     assert.equal(started.body.batchId, batchId);
     assert.equal(started.body.jobs.length, 2);
+    started.body.jobs=await Promise.all(started.body.jobs.map(job=>app.store.getJob(job.id)));
     assert.equal(new Set(started.body.jobs.map((job) => job.accountId)).size, 2);
     assert.deepEqual(started.body.jobs.map((job) => job.batchIndex), [1, 2]);
     assert.ok(started.body.jobs.every((job) => job.batchSize === 2
       && job.negativePrompt === input.negativePrompt && job.aspectRatio === "16:9"));
-    for (let attempt = 0; attempt < 80 && started.body.jobs.some((job) =>
-      app.store.getJob(job.id).status !== "success"); attempt += 1) {
+    for (let attempt = 0; attempt < 80 && (await Promise.all(started.body.jobs.map(job => app.store.getJob(job.id)))).some(job => job.status !== "success"); attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
-    assert.ok(started.body.jobs.every((job) => app.store.getJob(job.id).status === "success"));
+    assert.ok((await Promise.all(started.body.jobs.map(job => app.store.getJob(job.id)))).every(job => job.status === "success"));
     for (const job of started.body.jobs) {
       const workerInput = JSON.parse(fs.readFileSync(path.join(generatedRoot, `${job.id}.mp4.json`), "utf8"));
       assert.equal(workerInput.negativePrompt, input.negativePrompt);
@@ -713,25 +677,25 @@ console.log(JSON.stringify({ stage: "success", resultPath: job.outputPath }));`,
       { ...oneStepInput, negativePrompt: "不同的负面提示词" });
     assert.equal(conflict.status, 400);
     assert.equal(conflict.body.error, "IDEMPOTENCY_CONFLICT");
-    for (let attempt = 0; attempt < 80 && oneStep.body.jobs.some((job) =>
-      app.store.getJob(job.id).status !== "success"); attempt += 1) {
+    for (let attempt = 0; attempt < 80 && (await Promise.all(oneStep.body.jobs.map(job => app.store.getJob(job.id)))).some(job => job.status !== "success"); attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
-    assert.ok(oneStep.body.jobs.every((job) => app.store.getJob(job.id).status === "success"));
+    assert.ok((await Promise.all(oneStep.body.jobs.map(job => app.store.getJob(job.id)))).every(job => job.status === "success"));
     const textOnly = await post(port, "/api/video-generations", {
-      accountId: "auto", model: "Seedance 2.0 Fast", durationSeconds: 5,
+      accountId: "auto", model: "Seedance 2.0 Fast", durationSeconds: 15,
       aspectRatio: "16:9", positivePrompt: "一只纸飞机穿过云层",
       negativePrompt: "不要字幕", concurrency: 2, idempotencyKey: "text-only-batch",
     });
     assert.equal(textOnly.status, 202);
     assert.equal(textOnly.body.jobs.length, 2);
     assert.ok(textOnly.body.jobs.every((job) => job.referenceAssets.length === 0));
+    await app.queueScheduler.wake();
+    textOnly.body.jobs=await Promise.all(textOnly.body.jobs.map(job=>app.store.getJob(job.id)));
     assert.equal(new Set(textOnly.body.jobs.map((job) => job.accountId)).size, 2);
-    for (let attempt = 0; attempt < 80 && textOnly.body.jobs.some((job) =>
-      app.store.getJob(job.id).status !== "success"); attempt += 1) {
+    for (let attempt = 0; attempt < 80 && (await Promise.all(textOnly.body.jobs.map(job => app.store.getJob(job.id)))).some(job => job.status !== "success"); attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
-    assert.ok(textOnly.body.jobs.every((job) => app.store.getJob(job.id).status === "success"));
+    assert.ok((await Promise.all(textOnly.body.jobs.map(job => app.store.getJob(job.id)))).every(job => job.status === "success"));
     for (const job of textOnly.body.jobs) {
       const workerInput = JSON.parse(fs.readFileSync(path.join(generatedRoot, `${job.id}.mp4.json`), "utf8"));
       assert.deepEqual(workerInput.referenceAssets, []);

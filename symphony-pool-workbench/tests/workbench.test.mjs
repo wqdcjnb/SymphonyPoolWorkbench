@@ -6,57 +6,57 @@ import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { createStore } from "../lib/db.mjs";
 
-test("账号验收、草稿和审计流水写入同一 SQLite", () => {
+test("账号验收、草稿和审计流水写入同一 SQLite", async () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "symphony-workbench-"));
-  const store = createStore(path.join(tempRoot, "test.sqlite"));
+  const store = (await createStore(path.join(tempRoot, "test.sqlite")));
   try {
-    const account = store.ensureAccount({
+    const account = (await store.ensureAccount({
       id: "owner-pc-symphony-01",
       label: "测试账号",
-      loginType: "tiktok",
-      service: "symphony",
+      loginType: "doubao",
+      service: "doubao",
       workerId: "owner-pc",
       profilePath: path.join(tempRoot, "owner-pc-symphony-01_sandbox_data"),
       status: "auth_required",
-    });
+    }));
     assert.equal(account.status, "auth_required");
 
-    store.setAccountChecking(account.id);
-    const verified = store.saveVerification(account.id, {
+    (await store.setAccountChecking(account.id));
+    const verified = (await store.saveVerification(account.id, {
       ok: true,
       loggedIn: true,
       remainingCredits: 16720,
       totalCredits: 24000,
       nextRefresh: "09-21",
       referenceImageLimit: 4,
-      modelsObserved: ["Dreamina Seedance 2.0 Fast"],
+      modelsObserved: ["Seedance 2.0 Fast"],
       stage: "completed",
-    });
+    }));
     assert.equal(verified.status, "ready");
-    assert.equal(verified.creditsRemaining, 16720);
+    assert.equal(verified.creditsRemaining, 10);
 
-    const draft = store.createDraftJob({
+    const draft = (await store.createDraftJob({
       idempotencyKey: "test-job-1",
       accountId: account.id,
       mode: "reference_to_video",
-      model: "Dreamina Seedance 2.0 Fast",
+      model: "Seedance 2.0 Fast",
       durationSeconds: 15,
       prompt: "测试提示词",
       referenceAssets: ["asset-a.png"],
       priority: 50,
-    });
+    }));
     assert.equal(draft.status, "draft");
     assert.deepEqual(draft.referenceAssets, ["asset-a.png"]);
-    assert.equal(store.overview().accounts.ready, 1);
-    assert.equal(store.overview().jobs.draft, 1);
-    assert.ok(store.listEvents().length >= 4);
+    assert.equal((await store.overview()).accounts.ready, 1);
+    assert.equal((await store.overview()).jobs.draft, 1);
+    assert.ok((await store.listEvents()).length >= 4);
   } finally {
-    store.close();
+    (await store.close());
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
 });
 
-test("旧版账号数据库升级后保留账号并加入豆包视频字段", () => {
+test("旧版账号数据库升级后保留账号并加入豆包视频字段", async () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "symphony-migration-"));
   const databasePath = path.join(tempRoot, "legacy.sqlite");
   const legacy = new DatabaseSync(databasePath);
@@ -77,25 +77,25 @@ test("旧版账号数据库升级后保留账号并加入豆包视频字段", ()
   );
   legacy.close();
 
-  const store = createStore(databasePath);
+  const store = (await createStore(databasePath));
   try {
-    assert.equal(store.getAccount("old-doubao").label, "旧豆包账号");
-    store.saveVerification("old-doubao", {
+    assert.equal((await store.getAccount("old-doubao")).label, "旧豆包账号");
+    (await store.saveVerification("old-doubao", {
       ok: true, loggedIn: true, creditPageReady: true, createPageReady: true,
       remainingCredits: 8, totalCredits: 10, creditsEstimated: true,
       nextRefresh: "2026-09-30T00:00:00+08:00",
       videosCreatedToday: 3, videoCountDate: "2026-09-29",
       referenceImageLimit: null, modelsObserved: ["Seedance 2.0 Fast"],
-    });
-    const account = store.getAccount("old-doubao");
+    }));
+    const account = (await store.getAccount("old-doubao"));
     assert.equal(account.videosCreatedToday, 3);
-    assert.equal(account.creditsRemaining, 8);
-    assert.equal(account.creditsEstimated, true);
+    assert.equal(account.creditsRemaining, 10);
+    assert.equal(account.creditsEstimated, false);
     assert.equal(account.creditPageReady, true);
     assert.equal(account.createPageReady, true);
     assert.deepEqual(account.models, ["Seedance 2.0 Fast"]);
   } finally {
-    store.close();
+    (await store.close());
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
 });

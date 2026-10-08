@@ -1,0 +1,9 @@
+[Unit]
+Description=Symphony V2 PostgreSQL backup
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+UMask=0077
+ExecStart=/bin/bash /data/symphony/current-v2/symphony-pool-workbench/deploy/cloud/backup-v2.sh

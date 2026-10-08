@@ -20,12 +20,12 @@ test("deletion protects a live Linux profile owner and succeeds after it exits l
   skip: process.platform !== "linux",
 }, async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "live-profile-"));
-  const app = createWorkbenchServer({ port: await freePort(), workspaceRoot: root,
-    databasePath: path.join(root, "test.sqlite") });
+  const app = (await createWorkbenchServer({ port: await freePort(), workspaceRoot: root,
+    databasePath: path.join(root, "test.sqlite") }));
   let owner, exited;
   try {
     const { url } = await app.listen();
-    const account = app.store.listAccounts()[0];
+    const account = (await app.store.listAccounts())[0];
     fs.mkdirSync(account.profilePath);
     const marker = path.join(account.profilePath, "account-data");
     fs.writeFileSync(marker, "preserve while running");
@@ -43,12 +43,12 @@ test("deletion protects a live Linux profile owner and succeeds after it exits l
     assert.equal(busy.status, 409);
     assert.equal((await busy.json()).error, "ACCOUNT_PROFILE_IN_USE");
     assert.equal(fs.readFileSync(marker, "utf8"), "preserve while running");
-    assert.ok(app.store.getAccount(account.id));
+    assert.ok((await app.store.getAccount(account.id)));
     owner.kill();
     await exited;
     assert.equal((await remove()).status, 200);
     assert.equal(fs.existsSync(account.profilePath), false);
-    assert.equal(app.store.getAccount(account.id), null);
+    assert.equal((await app.store.getAccount(account.id)), null);
   } finally {
     if (owner && owner.exitCode === null && owner.signalCode === null) {
       owner.kill();
@@ -63,11 +63,11 @@ test("persistent profile directory remains separate from source code during crea
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "docker-profile-"));
   const profiles = path.join(root, "persistent-profiles");
   fs.mkdirSync(profiles);
-  const app = createWorkbenchServer({ port: await freePort(), workspaceRoot: path.join(root, "code"),
-    profileRoot: profiles, databasePath: path.join(root, "test.sqlite") });
+  const app = (await createWorkbenchServer({ port: await freePort(), workspaceRoot: path.join(root, "code"),
+    profileRoot: profiles, databasePath: path.join(root, "test.sqlite") }));
   try {
     const { url } = await app.listen();
-    assert.equal(path.dirname(app.store.listAccounts()[0].profilePath), profiles);
+    assert.equal(path.dirname((await app.store.listAccounts())[0].profilePath), profiles);
     const response = await fetch(`${url}/api/accounts`, { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ accountId: "docker-doubao-01", label: "Docker test", loginType: "doubao" }) });
     assert.equal(response.status, 201);
@@ -82,15 +82,15 @@ test("persistent profile directory remains separate from source code during crea
     assert.equal(path.dirname(moved.profilePath), profiles);
     assert.equal(fs.readFileSync(path.join(moved.profilePath, "marker"), "utf8"), "persistent");
 
-    const draft = app.store.createDraftJob({ idempotencyKey: "account-delete-draft",
+    const draft = (await app.store.createDraftJob({ idempotencyKey: "account-delete-draft",
       accountId: moved.id, mode: "image_to_video", model: "Seedance 2.0 Fast",
-      durationSeconds: 5, prompt: "测试删除保护", referenceAssets: [], priority: 50 });
+      durationSeconds: 15, prompt: "测试删除保护", referenceAssets: [], priority: 50 }));
     const deleteUrl = `${url}/api/accounts/${moved.id}`;
     const pending = await fetch(deleteUrl, { method: "DELETE" });
     assert.equal(pending.status, 409);
     assert.equal((await pending.json()).error, "ACCOUNT_HAS_PENDING_JOBS");
     assert.ok(fs.existsSync(moved.profilePath));
-    app.store.cancelJob(draft.id);
+    (await app.store.cancelJob(draft.id));
 
     if (process.platform === "linux") {
       // Container restarts retain broken Chromium symlinks in the persistent profile volume.
@@ -101,18 +101,18 @@ test("persistent profile directory remains separate from source code during crea
     const deleted = await fetch(deleteUrl, { method: "DELETE" });
     assert.equal(deleted.status, 200);
     assert.deepEqual(await deleted.json(), { ok: true, accountId: moved.id, profileCleanupPending: false });
-    assert.equal(app.store.getAccount(moved.id), null);
-    assert.equal(app.store.getJob(draft.id).status, "cancelled");
-    assert.equal(app.store.getJob(draft.id).accountId, null);
+    assert.equal((await app.store.getAccount(moved.id)), null);
+    assert.equal((await app.store.getJob(draft.id)).status, "cancelled");
+    assert.equal((await app.store.getJob(draft.id)).accountId, null);
     assert.equal(fs.existsSync(moved.profilePath), false);
-    assert.ok(app.store.listEvents().some((event) => event.eventType === "account.deleted"));
+    assert.ok((await app.store.listEvents()).some((event) => event.eventType === "account.deleted"));
 
-    const defaultId = "xzkj-pc-01-symphony-01";
+    const defaultId = "xzkj-pc-01-doubao-01";
     assert.equal((await fetch(`${url}/api/accounts/${defaultId}`, { method: "DELETE" })).status, 200);
-    assert.equal(app.store.listAccounts().length, 0);
-    const reopened = createWorkbenchServer({ port: await freePort(), workspaceRoot: path.join(root, "code"),
-      profileRoot: profiles, databasePath: path.join(root, "test.sqlite") });
-    try { assert.equal(reopened.store.listAccounts().length, 0); }
+    assert.equal((await app.store.listAccounts()).length, 0);
+    const reopened = (await createWorkbenchServer({ port: await freePort(), workspaceRoot: path.join(root, "code"),
+      profileRoot: profiles, databasePath: path.join(root, "test.sqlite") }));
+    try { assert.equal((await reopened.store.listAccounts()).length, 0); }
     finally { await reopened.close(); }
   } finally {
     await app.close();
@@ -123,10 +123,10 @@ test("persistent profile directory remains separate from source code during crea
 test("public gateway requests cannot reach management routes after URL normalization", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "docker-boundary-"));
   const key = "gateway-test-api-key-".repeat(3);
-  const app = createWorkbenchServer({ port: await freePort(), workspaceRoot: root,
+  const app = (await createWorkbenchServer({ port: await freePort(), workspaceRoot: root,
     databasePath: path.join(root, "test.sqlite"),
     partnerApi: { apiKey: key, downloadSecret: "gateway-test-download-secret-".repeat(3),
-      baseUrl: "https://192.168.1.100:9443/v1" } });
+      baseUrl: "https://192.168.1.100:9443/v1" } }));
   try {
     const { url } = await app.listen();
     const headers = { "X-Symphony-Api-Only": "1", Authorization: `Bearer ${key}` };
@@ -135,7 +135,7 @@ test("public gateway requests cannot reach management routes after URL normaliza
       assert.equal((await fetch(url + route, { headers })).status, 404, route);
     }
     assert.equal((await fetch(`${url}/api/accounts`, { method: "POST", headers, body: "{}" })).status, 404);
-    assert.equal((await fetch(`${url}/api/accounts/xzkj-pc-01-symphony-01`, { method: "DELETE", headers })).status, 404);
+    assert.equal((await fetch(`${url}/api/accounts/xzkj-pc-01-doubao-01`, { method: "DELETE", headers })).status, 404);
     assert.equal((await fetch(`${url}/api/health`)).status, 200);
     const docs = await (await fetch(`${url}/api-docs`)).text();
     assert.ok(docs.includes("https://192.168.1.100:9443/v1"));
